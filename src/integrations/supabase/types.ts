@@ -14,7 +14,89 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      test_flows: {
+        Row: {
+          api_mappings: Json
+          created_at: string
+          description: string
+          id: string
+          last_run_at: string | null
+          last_run_status: string | null
+          name: string
+          steps: Json
+          updated_at: string
+          url: string
+          user_id: string
+        }
+        Insert: {
+          api_mappings?: Json
+          created_at?: string
+          description?: string
+          id?: string
+          last_run_at?: string | null
+          last_run_status?: string | null
+          name: string
+          steps?: Json
+          updated_at?: string
+          url?: string
+          user_id: string
+        }
+        Update: {
+          api_mappings?: Json
+          created_at?: string
+          description?: string
+          id?: string
+          last_run_at?: string | null
+          last_run_status?: string | null
+          name?: string
+          steps?: Json
+          updated_at?: string
+          url?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      test_runs: {
+        Row: {
+          completed_at: string | null
+          duration_ms: number | null
+          id: string
+          logs: Json
+          started_at: string
+          status: string
+          test_flow_id: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          id?: string
+          logs?: Json
+          started_at?: string
+          status?: string
+          test_flow_id: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          id?: string
+          logs?: Json
+          started_at?: string
+          status?: string
+          test_flow_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "test_runs_test_flow_id_fkey"
+            columns: ["test_flow_id"]
+            isOneToOne: false
+            referencedRelation: "test_flows"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
