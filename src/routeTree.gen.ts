@@ -17,6 +17,7 @@ import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedTestsIndexRouteImport } from './routes/_authenticated/tests/index'
+import { Route as AuthenticatedTestsNewRouteImport } from './routes/_authenticated/tests/new'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -57,6 +58,11 @@ const AuthenticatedTestsIndexRoute = AuthenticatedTestsIndexRouteImport.update({
   path: '/tests/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedTestsNewRoute = AuthenticatedTestsNewRouteImport.update({
+  id: '/tests/new',
+  path: '/tests/new',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/tests/new': typeof AuthenticatedTestsNewRoute
   '/tests/': typeof AuthenticatedTestsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -74,6 +81,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/tests/new': typeof AuthenticatedTestsNewRoute
   '/tests': typeof AuthenticatedTestsIndexRoute
 }
 export interface FileRoutesById {
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/tests/new': typeof AuthenticatedTestsNewRoute
   '/_authenticated/tests/': typeof AuthenticatedTestsIndexRoute
 }
 export interface FileRouteTypes {
@@ -96,6 +105,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/dashboard'
+    | '/tests/new'
     | '/tests/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/dashboard'
+    | '/tests/new'
     | '/tests'
   id:
     | '__root__'
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/_authenticated/dashboard'
+    | '/_authenticated/tests/new'
     | '/_authenticated/tests/'
   fileRoutesById: FileRoutesById
 }
@@ -185,16 +197,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTestsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/tests/new': {
+      id: '/_authenticated/tests/new'
+      path: '/tests/new'
+      fullPath: '/tests/new'
+      preLoaderRoute: typeof AuthenticatedTestsNewRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
 interface AuthenticatedRouteChildren {
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedTestsNewRoute: typeof AuthenticatedTestsNewRoute
   AuthenticatedTestsIndexRoute: typeof AuthenticatedTestsIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedTestsNewRoute: AuthenticatedTestsNewRoute,
   AuthenticatedTestsIndexRoute: AuthenticatedTestsIndexRoute,
 }
 
