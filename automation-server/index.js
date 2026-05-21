@@ -64,13 +64,17 @@ let page;
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
+  const VIEWPORT = { width: 1280, height: 800 };
+  let cdpClient = null;
+
   socket.on('start_session', async ({ url }) => {
     try {
       if (!browser) {
         browser = await chromium.launch({ headless: true }); 
       }
-      context = await browser.newContext();
+      context = await browser.newContext({ viewport: VIEWPORT });
       page = await context.newPage();
+      socket.emit('viewport_info', VIEWPORT);
 
       // Setup page listeners for network and DOM events
       page.on('request', request => {
