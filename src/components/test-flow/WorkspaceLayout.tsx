@@ -52,7 +52,7 @@ export function WorkspaceLayout({ sidebar, preview, inspector, network }: Worksp
           <ResizableHandle withHandle />
           
           {/* Right Inspector */}
-          <ResizablePanel defaultSize={25} minSize={15} maxSize={40}>
+          <ResizablePanel defaultSize={25} minSize={15}>
             <div className="h-full bg-card border-l border-border/60 overflow-y-auto">
               {inspector}
             </div>

@@ -1,6 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import { Groq } from "groq-sdk";
+
+import fs from "node:fs";
+import path from "node:path";
 
 const StepSchema = z.object({
   id: z.string(),
@@ -17,8 +21,50 @@ const InferSchema = z.object({
 });
 
 async function callGateway(messages: Array<{ role: string; content: string }>, opts?: { json?: boolean }) {
-  const key = process.env.GEMINI_API_KEY || process.env.LOVABLE_API_KEY;
+  let key = process.env.GEMINI_API_KEY || process.env.LOVABLE_API_KEY;
+
+  // Try to load dynamically from .env to avoid needing a server restart
+  try {
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf-8");
+      const lines = content.split("\n");
+      for (const line of lines) {
+        const parts = line.split("=");
+        if (parts.length >= 2) {
+          const name = parts[0].trim();
+          let val = parts.slice(1).join("=").trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (name === "GEMINI_API_KEY" && val) {
+            key = val;
+            break;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Fallback to meta env if still not found or not starting with gsk_
+  if ((!key || !key.startsWith("gsk_")) && (import.meta as any).env?.VITE_GEMINI_API_KEY) {
+    key = (import.meta as any).env.VITE_GEMINI_API_KEY;
+  }
+
   if (!key) throw new Error("GEMINI_API_KEY not configured in .env");
+
+  // Groq API Key handler
+  if (key.startsWith("gsk_")) {
+    const groq = new Groq({ apiKey: key });
+    const chatCompletion = await groq.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      messages: messages as any,
+      ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
+    });
+    return chatCompletion.choices?.[0]?.message?.content ?? "";
+  }
 
   // If using a Lovable/OpenAI compatible key, fallback to that endpoint
   if (key.startsWith("sk-")) {
@@ -36,6 +82,7 @@ async function callGateway(messages: Array<{ role: string; content: string }>, o
     return json.choices?.[0]?.message?.content ?? "";
   }
 
+  /* GEMINI CODE (Commented Out)
   // Otherwise, use native Google Gemini API directly
   const geminiMessages = messages.map(m => ({
     role: m.role === "system" ? "user" : m.role, // Gemini system instructions work differently, simplest is treating all as user/model. For simplicity, we just format as user.
@@ -57,6 +104,8 @@ async function callGateway(messages: Array<{ role: string; content: string }>, o
   if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
   const json = await res.json();
   return json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  */
+  throw new Error("No Groq key configured");
 }
 
 export const inferApiMappings = createServerFn({ method: "POST" })
@@ -126,4 +175,29 @@ export const generateScript = createServerFn({ method: "POST" })
       { role: "user", content: user },
     ]);
     return { code: code.replace(/^```[a-z]*\n?|\n?```$/g, "").trim() };
+  });
+
+const AskAiSchema = z.object({
+  query: z.string().max(4000),
+  targetUrl: z.string().max(2000).optional(),
+  selectedElement: z.object({
+    tagName: z.string().optional().nullable(),
+    id: z.string().optional().nullable(),
+    className: z.string().optional().nullable(),
+    text: z.string().optional().nullable(),
+  }).optional().nullable(),
+});
+
+export const askAiAssistant = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => AskAiSchema.parse(input))
+  .handler(async ({ data }) => {
+    const elPrompt = data.selectedElement
+      ? `Currently selected element: <${data.selectedElement.tagName?.toLowerCase()}> id="${data.selectedElement.id || ''}" class="${data.selectedElement.className || ''}" text="${data.selectedElement.text || ''}"`
+      : '';
+    const userPrompt = `You are a QA automation expert. The user is inspecting a webpage at "${data.targetUrl || '(unknown)'}". Answer concisely:\n\n${data.query}\n\n${elPrompt}`;
+    const response = await callGateway([
+      { role: "user", content: userPrompt }
+    ]);
+    return { response };
   });

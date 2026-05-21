@@ -11,6 +11,8 @@ import {
   Wifi, WifiOff, Sparkles, Code, Bug
 } from "lucide-react";
 import { toast } from "sonner";
+import { useServerFn } from "@tanstack/react-start";
+import { askAiAssistant } from "@/lib/ai.functions";
 
 export const Route = createFileRoute("/_authenticated/tests/workspace/$testId")({
   component: WorkspacePage
@@ -18,6 +20,7 @@ export const Route = createFileRoute("/_authenticated/tests/workspace/$testId")(
 
 function WorkspacePage() {
   const { testId } = Route.useParams();
+  const askAiFn = useServerFn(askAiAssistant);
   const socketRef = useRef<Socket | null>(null);
 
   const {
@@ -141,6 +144,49 @@ function WorkspacePage() {
     setAiLoading(true);
     setAiResponse("");
     try {
+      const data = await askAiFn({
+        data: {
+          query: aiQuery,
+          targetUrl,
+          selectedElement: selectedElement ? {
+            tagName: selectedElement.tagName || null,
+            id: selectedElement.id || null,
+            className: selectedElement.className || null,
+            text: selectedElement.text || null,
+          } : null
+        }
+      });
+      setAiResponse(data.response || "No response from AI.");
+
+      /* OLD GROQ API CALL (Commented Out)
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+      
+      const res = await fetch("http://localhost:4000/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: "https://api.groq.com/openai/v1/chat/completions",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          data: {
+            model: "llama-3.3-70b-versatile",
+            messages: [
+              {
+                role: "user",
+                content: `You are a QA automation expert. The user is inspecting a webpage at "${targetUrl}". Answer concisely:\n\n${aiQuery}\n\n${selectedElement ? `Currently selected element: <${selectedElement.tagName?.toLowerCase()}> id="${selectedElement.id || ''}" class="${selectedElement.className || ''}" text="${selectedElement.text || ''}"` : ''}`
+              }
+            ]
+          }
+        })
+      });
+      const rawRes = await res.json();
+      setAiResponse(rawRes.data?.choices?.[0]?.message?.content || "No response from AI.");
+      */
+
+      /* GEMINI CODE (Commented Out)
       const res = await fetch("http://localhost:4000/proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,6 +201,7 @@ function WorkspacePage() {
       });
       const data = await res.json();
       setAiResponse(data.data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response from AI.");
+      */
     } catch {
       setAiResponse("Failed to reach AI. Check your API key.");
     } finally {
@@ -248,7 +295,7 @@ function WorkspacePage() {
                     )}
                     {selectedElement.dataTestId && (
                       <button onClick={() => copySelector(`[data-testid="${selectedElement.dataTestId}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors">
-                        [data-testid="{selectedElement.dataTestId}"]
+                        {`[data-testid="${selectedElement.dataTestId}"]`}
                       </button>
                     )}
                     {selectedElement.role && (
@@ -277,13 +324,15 @@ function WorkspacePage() {
                     if (!isRecording || !screencastFrame) return;
                     previewRef.current?.focus();
                     const { x, y } = toPageCoords(e);
-                    socketRef.current?.emit('forward_click', { x, y, button: 'left' });
+                    const eventName = mode === 'inspect' ? 'inspect_click' : 'forward_click';
+                    socketRef.current?.emit(eventName, { x, y, button: 'left' });
                   }}
                   onContextMenu={(e) => {
                     if (!isRecording || !screencastFrame) return;
                     e.preventDefault();
                     const { x, y } = toPageCoords(e);
-                    socketRef.current?.emit('forward_click', { x, y, button: 'right' });
+                    const eventName = mode === 'inspect' ? 'inspect_click' : 'forward_click';
+                    socketRef.current?.emit(eventName, { x, y, button: 'right' });
                   }}
                   onWheel={(e) => {
                     if (!isRecording || !screencastFrame) return;
@@ -395,7 +444,7 @@ function WorkspacePage() {
           <ResizableHandle withHandle />
 
           {/* Right Panel: Inspector / Security / AI */}
-          <ResizablePanel defaultSize={29} minSize={18} maxSize={40}>
+          <ResizablePanel defaultSize={29} minSize={18}>
             <div className="h-full bg-card/50 flex flex-col overflow-hidden">
               {/* Tabs */}
               <div className="flex items-center border-b border-border/50 bg-card/30 shrink-0">

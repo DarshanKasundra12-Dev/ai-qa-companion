@@ -6,9 +6,10 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { GoogleGenAI } from '@google/genai';
+import { Groq } from 'groq-sdk';
 
 dotenv.config();
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 app.use(cors());
@@ -259,15 +260,46 @@ io.on('connection', (socket) => {
               const dom = await page.evaluate(() => document.body.innerHTML);
               const prompt = `The UI test failed to click on "${step.selector}". Here is the page HTML:\n${dom.substring(0, 15000)}\nFind a robust alternative selector for this element. Return only the string for the selector.`;
               
-              const response = await ai.models.generateContent({
-                model: 'gemini-3-flash',
-                contents: prompt,
-              });
+              let newSelector = '';
+              const apiKey = process.env.GEMINI_API_KEY;
+              if (apiKey && apiKey.startsWith('gsk_')) {
+                const groq = new Groq({ apiKey });
+                const chatCompletion = await groq.chat.completions.create({
+                  model: 'llama-3.3-70b-versatile',
+                  messages: [
+                    { role: 'user', content: prompt }
+                  ]
+                });
+                newSelector = chatCompletion.choices?.[0]?.message?.content?.trim() || '';
+
+                /* OLD AXIOS CALL (Commented Out)
+                const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+                  model: 'llama-3.3-70b-versatile',
+                  messages: [
+                    { role: 'user', content: prompt }
+                  ]
+                }, {
+                  headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json'
+                  }
+                });
+                newSelector = response.data?.choices?.[0]?.message?.content?.trim() || '';
+                */
+              } else {
+                /*
+                const response = await ai.models.generateContent({
+                  model: 'gemini-3-flash',
+                  contents: prompt,
+                });
+                newSelector = response.text.trim();
+                */
+                throw new Error("No Groq key configured in GEMINI_API_KEY env");
+              }
               
-                let newSelector = response.text.trim();
-                if (newSelector.startsWith('```')) {
-                  newSelector = newSelector.replace(/```[a-z]*\n?/g, '').replace(/\n?```$/g, '');
-                }
+              if (newSelector.startsWith('```')) {
+                newSelector = newSelector.replace(/```[a-z]*\n?/g, '').replace(/\n?```$/g, '');
+              }
               
               socket.emit('step_healed', { stepId: step.id, oldSelector: step.selector, newSelector });
               
@@ -302,6 +334,12 @@ io.on('connection', (socket) => {
     if (!page) return;
     try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); }
     catch (e) { console.error('forward_click', e.message); }
+  });
+
+  socket.on('inspect_click', async ({ x, y, button }) => {
+    if (!page) return;
+    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); }
+    catch (e) { console.error('inspect_click', e.message); }
   });
 
   socket.on('forward_scroll', async ({ x, y, deltaX, deltaY }) => {
