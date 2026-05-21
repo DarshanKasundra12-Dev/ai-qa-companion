@@ -203,6 +203,20 @@ function WorkspacePage() {
           {isRecording ? <><Square className="size-3" /> Stop</> : <><Play className="size-3" /> Start Session</>}
         </Button>
 
+        {/* Inspect / Interact toggle */}
+        <div className="hidden sm:flex items-center rounded-md border border-border/50 overflow-hidden shrink-0">
+          <button
+            onClick={() => setMode('interact')}
+            className={`text-[11px] px-2 py-1 mono ${mode === 'interact' ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            title="Click and scroll inside the live browser"
+          >Interact</button>
+          <button
+            onClick={() => setMode('inspect')}
+            className={`text-[11px] px-2 py-1 mono ${mode === 'inspect' ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            title="Click to capture selectors"
+          >Inspect</button>
+        </div>
+
         <div className={`flex items-center gap-1.5 text-[11px] mono px-2 py-0.5 rounded-full border shrink-0 ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-red-500/30 bg-red-500/10 text-red-400'}`}>
           {isConnected ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
           <span className="hidden lg:inline">{isConnected ? 'Connected' : 'Disconnected'}</span>
