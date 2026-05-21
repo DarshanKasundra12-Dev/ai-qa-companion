@@ -292,6 +292,11 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('set_mode', async ({ mode }) => {
+    if (!page) return;
+    try { await page.evaluate((m) => { window.__qaforgeMode = m; }, mode); } catch {}
+  });
+
   // Forward user interactions to the live page
   socket.on('forward_click', async ({ x, y, button }) => {
     if (!page) return;
