@@ -37,6 +37,9 @@ function WorkspacePage() {
   const [aiQuery, setAiQuery] = useState("");
   const [aiResponse, setAiResponse] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [mode, setMode] = useState<'interact' | 'inspect'>('interact');
+  const [viewport, setViewport] = useState({ width: 1280, height: 800 });
+  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     clearWorkspace();
