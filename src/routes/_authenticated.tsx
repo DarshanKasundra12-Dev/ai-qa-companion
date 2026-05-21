@@ -15,7 +15,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, FlaskConical, LogOut, Plus, Zap } from "lucide-react";
+import { LayoutDashboard, FlaskConical, LogOut, Plus, Zap, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/_authenticated")({
@@ -29,6 +29,7 @@ export const Route = createFileRoute("/_authenticated")({
 const nav = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { to: "/tests", label: "Test Flows", icon: FlaskConical },
+  { to: "/api-tester", label: "API Tester", icon: Activity },
 ];
 
 function AuthenticatedLayout() {

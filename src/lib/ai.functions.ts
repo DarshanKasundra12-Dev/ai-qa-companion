@@ -17,22 +17,46 @@ const InferSchema = z.object({
 });
 
 async function callGateway(messages: Array<{ role: string; content: string }>, opts?: { json?: boolean }) {
-  const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("AI gateway not configured (LOVABLE_API_KEY missing)");
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const key = process.env.GEMINI_API_KEY || process.env.LOVABLE_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY not configured in .env");
+
+  // If using a Lovable/OpenAI compatible key, fallback to that endpoint
+  if (key.startsWith("sk-")) {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages,
+        ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
+      }),
+    });
+    if (!res.ok) throw new Error(`AI error ${res.status}: ${await res.text()}`);
+    const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    return json.choices?.[0]?.message?.content ?? "";
+  }
+
+  // Otherwise, use native Google Gemini API directly
+  const geminiMessages = messages.map(m => ({
+    role: m.role === "system" ? "user" : m.role, // Gemini system instructions work differently, simplest is treating all as user/model. For simplicity, we just format as user.
+    parts: [{ text: m.content }]
+  }));
+  
+  // To simulate 'system' messages in Gemini REST, we can just prepend it or combine it if needed, but for our simple prompt, mapping works.
+  const combinedText = messages.map(m => `[${m.role.toUpperCase()}]: ${m.content}`).join("\n\n");
+
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      messages,
-      ...(opts?.json ? { response_format: { type: "json_object" } } : {}),
-    }),
+      contents: [{ role: "user", parts: [{ text: combinedText }] }],
+      ...(opts?.json ? { generationConfig: { responseMimeType: "application/json" } } : {})
+    })
   });
-  if (res.status === 429) throw new Error("AI rate limit exceeded. Try again shortly.");
-  if (res.status === 402) throw new Error("AI credits exhausted. Add credits in workspace settings.");
-  if (!res.ok) throw new Error(`AI error ${res.status}: ${await res.text()}`);
-  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return json.choices?.[0]?.message?.content ?? "";
+
+  if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
+  const json = await res.json();
+  return json.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
 export const inferApiMappings = createServerFn({ method: "POST" })

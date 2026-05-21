@@ -32,9 +32,14 @@ function Dashboard() {
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
           <p className="text-sm text-muted-foreground">Your QA console at a glance.</p>
         </div>
-        <Link to="/tests/new">
-          <Button className="gap-2"><Plus className="size-4" /> New flow</Button>
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/api-tester">
+            <Button variant="outline" className="gap-2"><Network className="size-4" /> API Tester</Button>
+          </Link>
+          <Link to="/tests/workspace/new">
+            <Button className="gap-2"><Plus className="size-4" /> Open Workspace</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -54,7 +59,7 @@ function Dashboard() {
             flows.map((f) => (
               <Link
                 key={f.id}
-                to="/tests/$testId"
+                to="/tests/workspace/$testId"
                 params={{ testId: f.id }}
                 className="flex items-center gap-3 px-4 py-3 hover:bg-accent/40 transition-colors"
               >
