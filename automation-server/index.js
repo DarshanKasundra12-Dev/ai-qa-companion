@@ -293,6 +293,37 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Forward user interactions to the live page
+  socket.on('forward_click', async ({ x, y, button }) => {
+    if (!page) return;
+    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); }
+    catch (e) { console.error('forward_click', e.message); }
+  });
+
+  socket.on('forward_scroll', async ({ x, y, deltaX, deltaY }) => {
+    if (!page) return;
+    try {
+      await page.mouse.move(Math.round(x), Math.round(y));
+      await page.mouse.wheel(deltaX || 0, deltaY || 0);
+    } catch (e) { console.error('forward_scroll', e.message); }
+  });
+
+  socket.on('forward_move', async ({ x, y }) => {
+    if (!page) return;
+    try { await page.mouse.move(Math.round(x), Math.round(y)); }
+    catch {}
+  });
+
+  socket.on('forward_key', async ({ key }) => {
+    if (!page) return;
+    try { await page.keyboard.press(key); } catch (e) { console.error('forward_key', e.message); }
+  });
+
+  socket.on('forward_type', async ({ text }) => {
+    if (!page) return;
+    try { await page.keyboard.type(text); } catch (e) { console.error('forward_type', e.message); }
+  });
+
   socket.on('stop_session', async () => {
     if (page) {
       await page.close().catch(() => {});
