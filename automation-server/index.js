@@ -64,13 +64,17 @@ let page;
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
+  const VIEWPORT = { width: 1280, height: 800 };
+  let cdpClient = null;
+
   socket.on('start_session', async ({ url }) => {
     try {
       if (!browser) {
         browser = await chromium.launch({ headless: true }); 
       }
-      context = await browser.newContext();
+      context = await browser.newContext({ viewport: VIEWPORT });
       page = await context.newPage();
+      socket.emit('viewport_info', VIEWPORT);
 
       // Setup page listeners for network and DOM events
       page.on('request', request => {
@@ -155,14 +159,14 @@ io.on('connection', (socket) => {
         }
       `});
 
-      // Inject JS for element selection
+      // Inject JS for element selection (toggle via window.__qaforgeMode)
       await page.addScriptTag({ content: `
+        window.__qaforgeMode = 'interact';
         let highlightedElement = null;
 
         document.addEventListener('mouseover', (e) => {
-          if (highlightedElement) {
-            highlightedElement.classList.remove('qaforge-highlight');
-          }
+          if (window.__qaforgeMode !== 'inspect') return;
+          if (highlightedElement) highlightedElement.classList.remove('qaforge-highlight');
           highlightedElement = e.target;
           highlightedElement.classList.add('qaforge-highlight');
         }, true);
@@ -187,10 +191,10 @@ io.on('connection', (socket) => {
         }
 
         document.addEventListener('click', (e) => {
+          if (window.__qaforgeMode !== 'inspect') return;
           e.preventDefault();
           e.stopPropagation();
           const target = e.target;
-          
           const elData = {
             tagName: target.tagName,
             id: target.id,
@@ -203,7 +207,6 @@ io.on('connection', (socket) => {
             dataTestId: target.getAttribute('data-testid'),
             xpath: getXPath(target)
           };
-          
           window.onElementSelected(elData);
         }, true);
       `});
@@ -211,7 +214,8 @@ io.on('connection', (socket) => {
       // Start Screencast
       try {
         const client = await context.newCDPSession(page);
-        await client.send('Page.startScreencast', { format: 'jpeg', quality: 50, everyNthFrame: 1 });
+        cdpClient = client;
+        await client.send('Page.startScreencast', { format: 'jpeg', quality: 60, everyNthFrame: 1, maxWidth: VIEWPORT.width, maxHeight: VIEWPORT.height });
         client.on('Page.screencastFrame', async (frameObject) => {
             socket.emit('screencast_frame', { data: frameObject.data });
             await client.send('Page.screencastFrameAck', { sessionId: frameObject.sessionId });
@@ -286,6 +290,42 @@ io.on('connection', (socket) => {
       console.error(error);
       socket.emit('run_finished', { success: false, error: error.message });
     }
+  });
+
+  socket.on('set_mode', async ({ mode }) => {
+    if (!page) return;
+    try { await page.evaluate((m) => { window.__qaforgeMode = m; }, mode); } catch {}
+  });
+
+  // Forward user interactions to the live page
+  socket.on('forward_click', async ({ x, y, button }) => {
+    if (!page) return;
+    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); }
+    catch (e) { console.error('forward_click', e.message); }
+  });
+
+  socket.on('forward_scroll', async ({ x, y, deltaX, deltaY }) => {
+    if (!page) return;
+    try {
+      await page.mouse.move(Math.round(x), Math.round(y));
+      await page.mouse.wheel(deltaX || 0, deltaY || 0);
+    } catch (e) { console.error('forward_scroll', e.message); }
+  });
+
+  socket.on('forward_move', async ({ x, y }) => {
+    if (!page) return;
+    try { await page.mouse.move(Math.round(x), Math.round(y)); }
+    catch {}
+  });
+
+  socket.on('forward_key', async ({ key }) => {
+    if (!page) return;
+    try { await page.keyboard.press(key); } catch (e) { console.error('forward_key', e.message); }
+  });
+
+  socket.on('forward_type', async ({ text }) => {
+    if (!page) return;
+    try { await page.keyboard.type(text); } catch (e) { console.error('forward_type', e.message); }
   });
 
   socket.on('stop_session', async () => {

@@ -37,6 +37,9 @@ function WorkspacePage() {
   const [aiQuery, setAiQuery] = useState("");
   const [aiResponse, setAiResponse] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [mode, setMode] = useState<'interact' | 'inspect'>('interact');
+  const [viewport, setViewport] = useState({ width: 1280, height: 800 });
+  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     clearWorkspace();
@@ -90,8 +93,31 @@ function WorkspacePage() {
       setScreencastFrame(`data:image/jpeg;base64,${frame.data}`);
     });
 
+    socket.on("viewport_info", (vp) => setViewport(vp));
+
     return () => { socket.disconnect(); };
   }, []);
+
+  // Push mode changes to server
+  useEffect(() => {
+    if (socketRef.current && isRecording) socketRef.current.emit("set_mode", { mode });
+  }, [mode, isRecording]);
+
+  // Map a DOM pointer event in the preview to page coordinates
+  const toPageCoords = (e: React.MouseEvent | React.WheelEvent) => {
+    const el = previewRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const rect = el.getBoundingClientRect();
+    // Image uses object-contain — compute letterboxed image rect
+    const scale = Math.min(rect.width / viewport.width, rect.height / viewport.height);
+    const dispW = viewport.width * scale;
+    const dispH = viewport.height * scale;
+    const offX = (rect.width - dispW) / 2;
+    const offY = (rect.height - dispH) / 2;
+    const localX = (e.clientX - rect.left - offX) / scale;
+    const localY = (e.clientY - rect.top - offY) / scale;
+    return { x: Math.max(0, Math.min(viewport.width, localX)), y: Math.max(0, Math.min(viewport.height, localY)) };
+  };
 
   const toggleRecording = () => {
     if (isRecording) {
@@ -177,6 +203,20 @@ function WorkspacePage() {
           {isRecording ? <><Square className="size-3" /> Stop</> : <><Play className="size-3" /> Start Session</>}
         </Button>
 
+        {/* Inspect / Interact toggle */}
+        <div className="hidden sm:flex items-center rounded-md border border-border/50 overflow-hidden shrink-0">
+          <button
+            onClick={() => setMode('interact')}
+            className={`text-[11px] px-2 py-1 mono ${mode === 'interact' ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            title="Click and scroll inside the live browser"
+          >Interact</button>
+          <button
+            onClick={() => setMode('inspect')}
+            className={`text-[11px] px-2 py-1 mono ${mode === 'inspect' ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+            title="Click to capture selectors"
+          >Inspect</button>
+        </div>
+
         <div className={`flex items-center gap-1.5 text-[11px] mono px-2 py-0.5 rounded-full border shrink-0 ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-red-500/30 bg-red-500/10 text-red-400'}`}>
           {isConnected ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
           <span className="hidden lg:inline">{isConnected ? 'Connected' : 'Disconnected'}</span>
@@ -229,10 +269,46 @@ function WorkspacePage() {
             <ResizablePanelGroup direction="vertical">
               {/* Browser Preview */}
               <ResizablePanel defaultSize={70}>
-                <div className="h-full bg-black/90 flex items-center justify-center relative overflow-hidden">
+                <div
+                  ref={previewRef}
+                  tabIndex={0}
+                  className={`h-full bg-black/90 flex items-center justify-center relative overflow-hidden outline-none ${isRecording && screencastFrame ? (mode === 'inspect' ? 'cursor-crosshair' : 'cursor-pointer') : ''}`}
+                  onClick={(e) => {
+                    if (!isRecording || !screencastFrame) return;
+                    previewRef.current?.focus();
+                    const { x, y } = toPageCoords(e);
+                    socketRef.current?.emit('forward_click', { x, y, button: 'left' });
+                  }}
+                  onContextMenu={(e) => {
+                    if (!isRecording || !screencastFrame) return;
+                    e.preventDefault();
+                    const { x, y } = toPageCoords(e);
+                    socketRef.current?.emit('forward_click', { x, y, button: 'right' });
+                  }}
+                  onWheel={(e) => {
+                    if (!isRecording || !screencastFrame) return;
+                    const { x, y } = toPageCoords(e);
+                    socketRef.current?.emit('forward_scroll', { x, y, deltaX: e.deltaX, deltaY: e.deltaY });
+                  }}
+                  onMouseMove={(e) => {
+                    if (!isRecording || !screencastFrame || mode !== 'inspect') return;
+                    const { x, y } = toPageCoords(e);
+                    socketRef.current?.emit('forward_move', { x, y });
+                  }}
+                  onKeyDown={(e) => {
+                    if (!isRecording || !screencastFrame) return;
+                    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+                      e.preventDefault();
+                      socketRef.current?.emit('forward_type', { text: e.key });
+                    } else if (['Enter','Backspace','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Delete','Home','End','PageUp','PageDown'].includes(e.key)) {
+                      e.preventDefault();
+                      socketRef.current?.emit('forward_key', { key: e.key });
+                    }
+                  }}
+                >
                   {isRecording ? (
                     screencastFrame ? (
-                      <img src={screencastFrame} className="w-full h-full object-contain pointer-events-none" alt="Live Browser" />
+                      <img src={screencastFrame} className="w-full h-full object-contain pointer-events-none select-none" alt="Live Browser" draggable={false} />
                     ) : (
                       <div className="text-center space-y-3">
                         <div className="size-14 rounded-full bg-primary/20 flex items-center justify-center mx-auto animate-pulse">
@@ -247,6 +323,11 @@ function WorkspacePage() {
                       <Globe className="size-10 text-muted-foreground/30 mx-auto" />
                       <p className="text-sm text-muted-foreground">Enter a URL and click Start Session</p>
                       <p className="text-[10px] text-muted-foreground/50">Live browser preview will appear here</p>
+                    </div>
+                  )}
+                  {isRecording && screencastFrame && (
+                    <div className="absolute top-2 left-2 text-[10px] mono px-2 py-0.5 rounded-full bg-black/60 border border-border/50 text-muted-foreground pointer-events-none">
+                      {mode === 'inspect' ? '🔍 Inspect mode — click to capture' : '🖱️ Interact mode — click & scroll'}
                     </div>
                   )}
                 </div>
