@@ -215,7 +215,8 @@ io.on('connection', (socket) => {
       // Start Screencast
       try {
         const client = await context.newCDPSession(page);
-        await client.send('Page.startScreencast', { format: 'jpeg', quality: 50, everyNthFrame: 1 });
+        cdpClient = client;
+        await client.send('Page.startScreencast', { format: 'jpeg', quality: 60, everyNthFrame: 1, maxWidth: VIEWPORT.width, maxHeight: VIEWPORT.height });
         client.on('Page.screencastFrame', async (frameObject) => {
             socket.emit('screencast_frame', { data: frameObject.data });
             await client.send('Page.screencastFrameAck', { sessionId: frameObject.sessionId });
