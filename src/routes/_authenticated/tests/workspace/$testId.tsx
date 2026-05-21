@@ -93,8 +93,31 @@ function WorkspacePage() {
       setScreencastFrame(`data:image/jpeg;base64,${frame.data}`);
     });
 
+    socket.on("viewport_info", (vp) => setViewport(vp));
+
     return () => { socket.disconnect(); };
   }, []);
+
+  // Push mode changes to server
+  useEffect(() => {
+    if (socketRef.current && isRecording) socketRef.current.emit("set_mode", { mode });
+  }, [mode, isRecording]);
+
+  // Map a DOM pointer event in the preview to page coordinates
+  const toPageCoords = (e: React.MouseEvent | React.WheelEvent) => {
+    const el = previewRef.current;
+    if (!el) return { x: 0, y: 0 };
+    const rect = el.getBoundingClientRect();
+    // Image uses object-contain — compute letterboxed image rect
+    const scale = Math.min(rect.width / viewport.width, rect.height / viewport.height);
+    const dispW = viewport.width * scale;
+    const dispH = viewport.height * scale;
+    const offX = (rect.width - dispW) / 2;
+    const offY = (rect.height - dispH) / 2;
+    const localX = (e.clientX - rect.left - offX) / scale;
+    const localY = (e.clientY - rect.top - offY) / scale;
+    return { x: Math.max(0, Math.min(viewport.width, localX)), y: Math.max(0, Math.min(viewport.height, localY)) };
+  };
 
   const toggleRecording = () => {
     if (isRecording) {
