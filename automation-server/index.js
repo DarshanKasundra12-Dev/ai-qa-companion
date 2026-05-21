@@ -159,14 +159,14 @@ io.on('connection', (socket) => {
         }
       `});
 
-      // Inject JS for element selection
+      // Inject JS for element selection (toggle via window.__qaforgeMode)
       await page.addScriptTag({ content: `
+        window.__qaforgeMode = 'interact';
         let highlightedElement = null;
 
         document.addEventListener('mouseover', (e) => {
-          if (highlightedElement) {
-            highlightedElement.classList.remove('qaforge-highlight');
-          }
+          if (window.__qaforgeMode !== 'inspect') return;
+          if (highlightedElement) highlightedElement.classList.remove('qaforge-highlight');
           highlightedElement = e.target;
           highlightedElement.classList.add('qaforge-highlight');
         }, true);
@@ -191,10 +191,10 @@ io.on('connection', (socket) => {
         }
 
         document.addEventListener('click', (e) => {
+          if (window.__qaforgeMode !== 'inspect') return;
           e.preventDefault();
           e.stopPropagation();
           const target = e.target;
-          
           const elData = {
             tagName: target.tagName,
             id: target.id,
@@ -207,7 +207,6 @@ io.on('connection', (socket) => {
             dataTestId: target.getAttribute('data-testid'),
             xpath: getXPath(target)
           };
-          
           window.onElementSelected(elData);
         }, true);
       `});
