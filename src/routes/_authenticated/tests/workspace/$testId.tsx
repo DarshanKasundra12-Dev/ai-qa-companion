@@ -149,51 +149,45 @@ function WorkspacePage() {
 
   return (
     <div className="h-[calc(100vh-3rem)] w-full bg-background flex flex-col overflow-hidden">
-      {/* Workspace top bar */}
-      <div className="h-11 border-b border-border/50 flex items-center px-3 gap-3 shrink-0 bg-card/40 backdrop-blur-sm">
-        <Link to="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors">
+      {/* Workspace top bar — URL + Start always visible */}
+      <div className="h-12 border-b border-border/50 flex items-center px-3 gap-2 shrink-0 bg-card/40 backdrop-blur-sm">
+        <Link to="/dashboard" className="text-muted-foreground hover:text-foreground transition-colors shrink-0">
           <ArrowLeft className="size-4" />
         </Link>
-        <div className="flex items-center gap-2 text-sm font-medium">
+        <div className="flex items-center gap-2 text-sm font-medium shrink-0">
           <Globe className="size-4 text-primary" />
-          <span>Workspace</span>
-          <span className="text-muted-foreground text-xs mono">#{testId.slice(0, 8)}</span>
+          <span className="hidden md:inline">Workspace</span>
+          <span className="text-muted-foreground text-[10px] mono">#{testId.slice(0, 6)}</span>
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <div className={`flex items-center gap-1.5 text-[11px] mono px-2 py-0.5 rounded-full border ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-red-500/30 bg-red-500/10 text-red-400'}`}>
-            {isConnected ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
-            {isConnected ? 'Server Connected' : 'Disconnected'}
-          </div>
+
+        <Input
+          type="url"
+          value={urlInput}
+          onChange={(e) => setUrlInput(e.target.value)}
+          className="h-8 text-xs bg-black/30 border-border/50 mono flex-1 min-w-0"
+          placeholder="https://example.com"
+          onKeyDown={(e) => e.key === 'Enter' && !isRecording && toggleRecording()}
+        />
+        <Button
+          onClick={toggleRecording}
+          variant={isRecording ? "destructive" : "default"}
+          className="h-8 text-xs gap-1.5 shrink-0"
+          disabled={!isConnected}
+        >
+          {isRecording ? <><Square className="size-3" /> Stop</> : <><Play className="size-3" /> Start Session</>}
+        </Button>
+
+        <div className={`flex items-center gap-1.5 text-[11px] mono px-2 py-0.5 rounded-full border shrink-0 ${isConnected ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-red-500/30 bg-red-500/10 text-red-400'}`}>
+          {isConnected ? <Wifi className="size-3" /> : <WifiOff className="size-3" />}
+          <span className="hidden lg:inline">{isConnected ? 'Connected' : 'Disconnected'}</span>
         </div>
       </div>
 
       <div className="flex-1 overflow-hidden">
         <ResizablePanelGroup direction="horizontal">
-          {/* Left Sidebar: Controls */}
-          <ResizablePanel defaultSize={16} minSize={12} maxSize={22}>
+          {/* Left Sidebar: Session info + Quick Selectors */}
+          <ResizablePanel defaultSize={18} minSize={10}>
             <div className="h-full bg-card/50 overflow-y-auto p-3 space-y-4">
-              {/* URL + Session Control */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Target URL</label>
-                <Input
-                  type="url"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  className="h-8 text-xs bg-black/30 border-border/50 mono"
-                  placeholder="https://example.com"
-                  onKeyDown={(e) => e.key === 'Enter' && !isRecording && toggleRecording()}
-                />
-                <Button
-                  onClick={toggleRecording}
-                  variant={isRecording ? "destructive" : "default"}
-                  className="w-full h-8 text-xs gap-1.5"
-                  disabled={!isConnected}
-                >
-                  {isRecording ? <><Square className="size-3" /> Stop Session</> : <><Play className="size-3" /> Start Session</>}
-                </Button>
-              </div>
-
-              {/* Connection status detail */}
               <div className="space-y-2">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Session Info</label>
                 <div className="text-[11px] space-y-1 text-muted-foreground">
@@ -203,7 +197,6 @@ function WorkspacePage() {
                 </div>
               </div>
 
-              {/* Quick actions */}
               {selectedElement && (
                 <div className="space-y-2">
                   <label className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Quick Selectors</label>
