@@ -16,7 +16,11 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedApiTesterRouteImport } from './routes/_authenticated/api-tester'
 import { Route as AuthenticatedTestsIndexRouteImport } from './routes/_authenticated/tests/index'
+import { Route as AuthenticatedTestsNewRouteImport } from './routes/_authenticated/tests/new'
+import { Route as AuthenticatedTestsTestIdRouteImport } from './routes/_authenticated/tests/$testId'
+import { Route as AuthenticatedTestsWorkspaceTestIdRouteImport } from './routes/_authenticated/tests/workspace/$testId'
 
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
@@ -52,11 +56,33 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedApiTesterRoute = AuthenticatedApiTesterRouteImport.update({
+  id: '/api-tester',
+  path: '/api-tester',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedTestsIndexRoute = AuthenticatedTestsIndexRouteImport.update({
   id: '/tests/',
   path: '/tests/',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedTestsNewRoute = AuthenticatedTestsNewRouteImport.update({
+  id: '/tests/new',
+  path: '/tests/new',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedTestsTestIdRoute =
+  AuthenticatedTestsTestIdRouteImport.update({
+    id: '/tests/$testId',
+    path: '/tests/$testId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedTestsWorkspaceTestIdRoute =
+  AuthenticatedTestsWorkspaceTestIdRouteImport.update({
+    id: '/tests/workspace/$testId',
+    path: '/tests/workspace/$testId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -64,8 +90,12 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/api-tester': typeof AuthenticatedApiTesterRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/tests/$testId': typeof AuthenticatedTestsTestIdRoute
+  '/tests/new': typeof AuthenticatedTestsNewRoute
   '/tests/': typeof AuthenticatedTestsIndexRoute
+  '/tests/workspace/$testId': typeof AuthenticatedTestsWorkspaceTestIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -73,8 +103,12 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/api-tester': typeof AuthenticatedApiTesterRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/tests/$testId': typeof AuthenticatedTestsTestIdRoute
+  '/tests/new': typeof AuthenticatedTestsNewRoute
   '/tests': typeof AuthenticatedTestsIndexRoute
+  '/tests/workspace/$testId': typeof AuthenticatedTestsWorkspaceTestIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -84,8 +118,12 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/_authenticated/api-tester': typeof AuthenticatedApiTesterRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/tests/$testId': typeof AuthenticatedTestsTestIdRoute
+  '/_authenticated/tests/new': typeof AuthenticatedTestsNewRoute
   '/_authenticated/tests/': typeof AuthenticatedTestsIndexRoute
+  '/_authenticated/tests/workspace/$testId': typeof AuthenticatedTestsWorkspaceTestIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -95,8 +133,12 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/api-tester'
     | '/dashboard'
+    | '/tests/$testId'
+    | '/tests/new'
     | '/tests/'
+    | '/tests/workspace/$testId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -104,8 +146,12 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/api-tester'
     | '/dashboard'
+    | '/tests/$testId'
+    | '/tests/new'
     | '/tests'
+    | '/tests/workspace/$testId'
   id:
     | '__root__'
     | '/'
@@ -114,8 +160,12 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/_authenticated/api-tester'
     | '/_authenticated/dashboard'
+    | '/_authenticated/tests/$testId'
+    | '/_authenticated/tests/new'
     | '/_authenticated/tests/'
+    | '/_authenticated/tests/workspace/$testId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -178,6 +228,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/api-tester': {
+      id: '/_authenticated/api-tester'
+      path: '/api-tester'
+      fullPath: '/api-tester'
+      preLoaderRoute: typeof AuthenticatedApiTesterRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/tests/': {
       id: '/_authenticated/tests/'
       path: '/tests'
@@ -185,17 +242,47 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedTestsIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/tests/new': {
+      id: '/_authenticated/tests/new'
+      path: '/tests/new'
+      fullPath: '/tests/new'
+      preLoaderRoute: typeof AuthenticatedTestsNewRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/tests/$testId': {
+      id: '/_authenticated/tests/$testId'
+      path: '/tests/$testId'
+      fullPath: '/tests/$testId'
+      preLoaderRoute: typeof AuthenticatedTestsTestIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/tests/workspace/$testId': {
+      id: '/_authenticated/tests/workspace/$testId'
+      path: '/tests/workspace/$testId'
+      fullPath: '/tests/workspace/$testId'
+      preLoaderRoute: typeof AuthenticatedTestsWorkspaceTestIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
   }
 }
 
 interface AuthenticatedRouteChildren {
+  AuthenticatedApiTesterRoute: typeof AuthenticatedApiTesterRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedTestsTestIdRoute: typeof AuthenticatedTestsTestIdRoute
+  AuthenticatedTestsNewRoute: typeof AuthenticatedTestsNewRoute
   AuthenticatedTestsIndexRoute: typeof AuthenticatedTestsIndexRoute
+  AuthenticatedTestsWorkspaceTestIdRoute: typeof AuthenticatedTestsWorkspaceTestIdRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedApiTesterRoute: AuthenticatedApiTesterRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedTestsTestIdRoute: AuthenticatedTestsTestIdRoute,
+  AuthenticatedTestsNewRoute: AuthenticatedTestsNewRoute,
   AuthenticatedTestsIndexRoute: AuthenticatedTestsIndexRoute,
+  AuthenticatedTestsWorkspaceTestIdRoute:
+    AuthenticatedTestsWorkspaceTestIdRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
@@ -213,13 +300,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
