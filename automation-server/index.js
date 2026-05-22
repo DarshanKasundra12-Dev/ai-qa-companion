@@ -5,321 +5,308 @@ import { chromium } from 'playwright';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import { GoogleGenAI } from '@google/genai';
 import { Groq } from 'groq-sdk';
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
 
 dotenv.config();
-// const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// API Tester Proxy Endpoint
+// --- Storage state cache ----------------------------------------------------
+const STATE_DIR = path.join(os.tmpdir(), 'qaforge-states');
+await fs.mkdir(STATE_DIR, { recursive: true }).catch(() => {});
+
+function stateKey(userId, loginUrl, username) {
+  return crypto.createHash('sha256').update(`${userId}::${loginUrl}::${username}`).digest('hex');
+}
+function stateFile(userId, loginUrl, username) {
+  return path.join(STATE_DIR, `${stateKey(userId, loginUrl, username)}.json`);
+}
+async function loadStorageState(userId, loginUrl, username) {
+  try { return JSON.parse(await fs.readFile(stateFile(userId, loginUrl, username), 'utf8')); }
+  catch { return undefined; }
+}
+async function saveStorageState(userId, loginUrl, username, state) {
+  await fs.writeFile(stateFile(userId, loginUrl, username), JSON.stringify(state));
+}
+async function clearStorageState(userId, loginUrl, username) {
+  try { await fs.unlink(stateFile(userId, loginUrl, username)); } catch {}
+}
+
+async function loginAndCache(browser, { userId, loginUrl, username, password, selectors }) {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  try {
+    await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
+    await page.fill(selectors.username, username, { timeout: 8000 });
+    await page.fill(selectors.password, password, { timeout: 8000 });
+    await Promise.all([
+      page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {}),
+      page.click(selectors.submit, { timeout: 8000 }),
+    ]);
+    const state = await ctx.storageState();
+    await saveStorageState(userId, loginUrl, username, state);
+    return state;
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+}
+
+// --- API Tester proxy (kept) ------------------------------------------------
 app.post('/proxy', async (req, res) => {
   const { url, method, headers, data } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
-
   const startTime = Date.now();
   try {
-    const response = await axios({
-      url,
-      method: method || 'GET',
-      headers: headers || {},
-      data,
-      validateStatus: () => true, // Don't throw on 4xx/5xx
-      timeout: 15000
-    });
-
-    res.json({
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      data: response.data,
-      timeMs: Date.now() - startTime,
-      size: JSON.stringify(response.data)?.length || 0
-    });
+    const response = await axios({ url, method: method || 'GET', headers: headers || {}, data, validateStatus: () => true, timeout: 15000 });
+    res.json({ status: response.status, statusText: response.statusText, headers: response.headers, data: response.data, timeMs: Date.now() - startTime, size: JSON.stringify(response.data)?.length || 0 });
   } catch (error) {
-    res.json({
-      status: 0,
-      statusText: 'Error',
-      error: error.message,
-      timeMs: Date.now() - startTime,
-      size: 0
-    });
+    res.json({ status: 0, statusText: 'Error', error: error.message, timeMs: Date.now() - startTime, size: 0 });
   }
 });
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+const io = new Server(httpServer, { cors: { origin: '*', methods: ['GET', 'POST'] } });
+
+// --- Socket.io JWT auth (Supabase) -----------------------------------------
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
+const supabaseAuth = SUPABASE_URL && SUPABASE_KEY ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+io.use(async (socket, next) => {
+  // If Supabase isn't configured, allow (dev mode) but tag user as anonymous
+  if (!supabaseAuth) {
+    socket.data.userId = `anon-${socket.id}`;
+    return next();
+  }
+  const token = socket.handshake.auth?.token;
+  if (!token) return next(new Error('Unauthorized: missing token'));
+  try {
+    const { data, error } = await supabaseAuth.auth.getUser(token);
+    if (error || !data?.user) return next(new Error('Unauthorized: invalid token'));
+    socket.data.userId = data.user.id;
+    next();
+  } catch (e) {
+    next(new Error('Unauthorized: ' + (e.message || 'auth failed')));
   }
 });
 
+// --- Browser (shared) -------------------------------------------------------
 let browser;
-let context;
-let page;
+async function getBrowser() {
+  if (!browser) browser = await chromium.launch({ headless: true });
+  return browser;
+}
 
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  console.log('Client connected:', socket.id, 'user:', socket.data.userId);
 
   const VIEWPORT = { width: 1280, height: 800 };
+  // Per-socket state (isolation)
+  let context = null;
+  let page = null;
   let cdpClient = null;
+  let activeAuth = null; // { loginUrl, username, password, selectors }
 
-  socket.on('start_session', async ({ url }) => {
+  async function attachPageListeners(p) {
+    p.on('request', request => {
+      socket.emit('network_request', { url: request.url(), method: request.method(), resourceType: request.resourceType() });
+    });
+    p.on('response', async response => {
+      try {
+        const request = response.request();
+        const headers = response.headers();
+        const url = response.url();
+        const issues = [];
+        if (!headers['strict-transport-security'] && url.startsWith('https://')) {
+          issues.push({ type: 'header', name: 'Missing HSTS', severity: 'Medium', details: 'Strict-Transport-Security header is missing.' });
+        }
+        if (!headers['x-frame-options'] && !headers['content-security-policy']?.includes('frame-ancestors')) {
+          issues.push({ type: 'header', name: 'Missing Clickjacking Protection', severity: 'Medium', details: 'X-Frame-Options or CSP frame-ancestors is missing.' });
+        }
+        const setCookie = headers['set-cookie'];
+        if (setCookie) {
+          const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+          cookies.forEach(c => {
+            if (!c.toLowerCase().includes('secure')) issues.push({ type: 'cookie', name: 'Insecure Cookie', severity: 'High', details: 'Cookie is missing the Secure flag.' });
+            if (!c.toLowerCase().includes('httponly') && (c.toLowerCase().includes('session') || c.toLowerCase().includes('token'))) {
+              issues.push({ type: 'cookie', name: 'Missing HttpOnly on Auth Cookie', severity: 'High', details: 'Potentially sensitive cookie missing HttpOnly flag.' });
+            }
+          });
+        }
+        let body = null;
+        if (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') {
+          body = await response.text().catch(() => null);
+          if (body && /eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/.test(body) && !url.includes('auth') && !url.includes('login')) {
+            issues.push({ type: 'leak', name: 'Exposed JWT Token', severity: 'Critical', details: 'Found a JWT token in the response body of a non-auth endpoint.' });
+          }
+        }
+        if (issues.length > 0) socket.emit('security_issues', { url, issues });
+        if (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') {
+          socket.emit('network_response', { url: response.url(), status: response.status(), ok: response.ok(), body: body ? body.substring(0, 1000) : null });
+        }
+        // Detect 401 → suggest re-login
+        if (response.status() === 401) {
+          socket.emit('auth_expired', { url: response.url() });
+        }
+      } catch (error) { console.error('response capture', error); }
+    });
+  }
+
+  async function injectInspector(p) {
+    await p.exposeFunction('onElementSelected', (elData) => socket.emit('element_selected', elData));
+    await p.addStyleTag({ content: `.qaforge-highlight{outline:2px dashed #ff00ff !important;background-color:rgba(255,0,255,0.1) !important;cursor:crosshair !important;}` });
+    await p.addScriptTag({ content: `
+      window.__qaforgeMode = 'interact';
+      let highlightedElement = null;
+      document.addEventListener('mouseover', (e) => {
+        if (window.__qaforgeMode !== 'inspect') return;
+        if (highlightedElement) highlightedElement.classList.remove('qaforge-highlight');
+        highlightedElement = e.target; highlightedElement.classList.add('qaforge-highlight');
+      }, true);
+      document.addEventListener('mouseout', () => { if (highlightedElement) { highlightedElement.classList.remove('qaforge-highlight'); highlightedElement = null; } }, true);
+      function getXPath(el){ if(el.id!=='')return 'id("'+el.id+'")'; if(el===document.body)return el.tagName; let ix=0; const sib=el.parentNode.childNodes; for(let i=0;i<sib.length;i++){const s=sib[i]; if(s===el)return getXPath(el.parentNode)+'/'+el.tagName+'['+(ix+1)+']'; if(s.nodeType===1&&s.tagName===el.tagName)ix++;} }
+      document.addEventListener('click', (e) => {
+        if (window.__qaforgeMode !== 'inspect') return;
+        e.preventDefault(); e.stopPropagation();
+        const t = e.target;
+        window.onElementSelected({ tagName:t.tagName, id:t.id, className:t.className, text:t.innerText?.substring(0,50), placeholder:t.placeholder, name:t.name, role:t.getAttribute('role'), ariaLabel:t.getAttribute('aria-label'), dataTestId:t.getAttribute('data-testid'), xpath:getXPath(t) });
+      }, true);
+    ` });
+  }
+
+  async function startScreencast(ctx, p) {
     try {
-      if (!browser) {
-        browser = await chromium.launch({ headless: true }); 
+      const client = await ctx.newCDPSession(p);
+      cdpClient = client;
+      await client.send('Page.startScreencast', { format: 'jpeg', quality: 60, everyNthFrame: 1, maxWidth: VIEWPORT.width, maxHeight: VIEWPORT.height });
+      client.on('Page.screencastFrame', async (f) => {
+        socket.emit('screencast_frame', { data: f.data });
+        await client.send('Page.screencastFrameAck', { sessionId: f.sessionId });
+      });
+    } catch (e) { console.error('screencast', e); }
+  }
+
+  async function teardown() {
+    try { if (cdpClient) { await cdpClient.detach().catch(()=>{}); cdpClient = null; } } catch {}
+    if (page) { await page.close().catch(()=>{}); page = null; }
+    if (context) { await context.close().catch(()=>{}); context = null; }
+  }
+
+  socket.on('start_session', async ({ url, auth }) => {
+    try {
+      await teardown(); // clean previous
+      const b = await getBrowser();
+
+      // Resolve storageState if auth recipe is provided
+      let storageState;
+      if (auth?.loginUrl && auth?.username) {
+        activeAuth = auth;
+        storageState = await loadStorageState(socket.data.userId, auth.loginUrl, auth.username);
+        if (!storageState && auth.password && auth.selectors?.username && auth.selectors?.password && auth.selectors?.submit) {
+          socket.emit('auth_status', { stage: 'logging_in' });
+          try {
+            storageState = await loginAndCache(b, { userId: socket.data.userId, ...auth });
+            socket.emit('auth_status', { stage: 'logged_in' });
+          } catch (e) {
+            socket.emit('auth_status', { stage: 'login_failed', error: e.message });
+          }
+        } else if (storageState) {
+          socket.emit('auth_status', { stage: 'using_cached' });
+        }
       }
-      context = await browser.newContext({ viewport: VIEWPORT });
+
+      context = await b.newContext({ viewport: VIEWPORT, storageState });
       page = await context.newPage();
       socket.emit('viewport_info', VIEWPORT);
 
-      // Setup page listeners for network and DOM events
-      page.on('request', request => {
-        socket.emit('network_request', {
-          url: request.url(),
-          method: request.method(),
-          resourceType: request.resourceType(),
-        });
-      });
-
-      page.on('response', async response => {
-        try {
-            const request = response.request();
-            const headers = response.headers();
-            const url = response.url();
-            
-            // Security Checks
-            const issues = [];
-            
-            // 1. Missing Security Headers
-            if (!headers['strict-transport-security'] && url.startsWith('https://')) {
-                issues.push({ type: 'header', name: 'Missing HSTS', severity: 'Medium', details: 'Strict-Transport-Security header is missing.' });
-            }
-            if (!headers['x-frame-options'] && !headers['content-security-policy']?.includes('frame-ancestors')) {
-                issues.push({ type: 'header', name: 'Missing Clickjacking Protection', severity: 'Medium', details: 'X-Frame-Options or CSP frame-ancestors is missing.' });
-            }
-            
-            // 2. Insecure Cookies
-            const setCookie = headers['set-cookie'];
-            if (setCookie) {
-                const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
-                cookies.forEach(c => {
-                    if (!c.toLowerCase().includes('secure')) {
-                        issues.push({ type: 'cookie', name: 'Insecure Cookie', severity: 'High', details: 'Cookie is missing the Secure flag.' });
-                    }
-                    if (!c.toLowerCase().includes('httponly') && (c.toLowerCase().includes('session') || c.toLowerCase().includes('token'))) {
-                        issues.push({ type: 'cookie', name: 'Missing HttpOnly on Auth Cookie', severity: 'High', details: 'Potentially sensitive cookie missing HttpOnly flag.' });
-                    }
-                });
-            }
-
-            // 3. Exposed Tokens (Naive check in response body for demo)
-            let body = null;
-            if (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') {
-                body = await response.text().catch(() => null);
-                if (body) {
-                    if (/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/.test(body) && !url.includes('auth') && !url.includes('login')) {
-                        issues.push({ type: 'leak', name: 'Exposed JWT Token', severity: 'Critical', details: 'Found a JWT token in the response body of a non-auth endpoint.' });
-                    }
-                }
-            }
-
-            if (issues.length > 0) {
-                socket.emit('security_issues', { url, issues });
-            }
-
-            if (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') {
-                socket.emit('network_response', {
-                    url: response.url(),
-                    status: response.status(),
-                    ok: response.ok(),
-                    body: body ? body.substring(0, 1000) : null
-                });
-            }
-        } catch (error) {
-            console.error('Error capturing response:', error);
-        }
-      });
-
-      await page.exposeFunction('onElementSelected', (elData) => {
-        socket.emit('element_selected', elData);
-      });
-
+      await attachPageListeners(page);
       await page.goto(url, { waitUntil: 'domcontentloaded' });
-      
-      // Inject CSS for highlighting
-      await page.addStyleTag({ content: `
-        .qaforge-highlight {
-          outline: 2px dashed #ff00ff !important;
-          background-color: rgba(255, 0, 255, 0.1) !important;
-          cursor: crosshair !important;
-        }
-      `});
-
-      // Inject JS for element selection (toggle via window.__qaforgeMode)
-      await page.addScriptTag({ content: `
-        window.__qaforgeMode = 'interact';
-        let highlightedElement = null;
-
-        document.addEventListener('mouseover', (e) => {
-          if (window.__qaforgeMode !== 'inspect') return;
-          if (highlightedElement) highlightedElement.classList.remove('qaforge-highlight');
-          highlightedElement = e.target;
-          highlightedElement.classList.add('qaforge-highlight');
-        }, true);
-
-        document.addEventListener('mouseout', (e) => {
-          if (highlightedElement) {
-            highlightedElement.classList.remove('qaforge-highlight');
-            highlightedElement = null;
-          }
-        }, true);
-
-        function getXPath(element) {
-          if (element.id !== '') return 'id("' + element.id + '")';
-          if (element === document.body) return element.tagName;
-          let ix = 0;
-          let siblings = element.parentNode.childNodes;
-          for (let i = 0; i < siblings.length; i++) {
-            let sibling = siblings[i];
-            if (sibling === element) return getXPath(element.parentNode) + '/' + element.tagName + '[' + (ix + 1) + ']';
-            if (sibling.nodeType === 1 && sibling.tagName === element.tagName) ix++;
-          }
-        }
-
-        document.addEventListener('click', (e) => {
-          if (window.__qaforgeMode !== 'inspect') return;
-          e.preventDefault();
-          e.stopPropagation();
-          const target = e.target;
-          const elData = {
-            tagName: target.tagName,
-            id: target.id,
-            className: target.className,
-            text: target.innerText?.substring(0, 50),
-            placeholder: target.placeholder,
-            name: target.name,
-            role: target.getAttribute('role'),
-            ariaLabel: target.getAttribute('aria-label'),
-            dataTestId: target.getAttribute('data-testid'),
-            xpath: getXPath(target)
-          };
-          window.onElementSelected(elData);
-        }, true);
-      `});
-
-      // Start Screencast
-      try {
-        const client = await context.newCDPSession(page);
-        cdpClient = client;
-        await client.send('Page.startScreencast', { format: 'jpeg', quality: 60, everyNthFrame: 1, maxWidth: VIEWPORT.width, maxHeight: VIEWPORT.height });
-        client.on('Page.screencastFrame', async (frameObject) => {
-            socket.emit('screencast_frame', { data: frameObject.data });
-            await client.send('Page.screencastFrameAck', { sessionId: frameObject.sessionId });
-        });
-      } catch (cdpErr) {
-        console.error('Failed to start screencast', cdpErr);
-      }
+      await injectInspector(page);
+      await startScreencast(context, page);
 
       socket.emit('session_started', { success: true, url });
-
     } catch (error) {
       console.error(error);
       socket.emit('session_started', { success: false, error: error.message });
     }
   });
 
+  // Force re-login: clear cached state and re-run the login recipe
+  socket.on('relogin', async () => {
+    if (!activeAuth?.loginUrl || !activeAuth?.username) {
+      return socket.emit('auth_status', { stage: 'login_failed', error: 'No login recipe configured for this session' });
+    }
+    try {
+      await clearStorageState(socket.data.userId, activeAuth.loginUrl, activeAuth.username);
+      const b = await getBrowser();
+      socket.emit('auth_status', { stage: 'logging_in' });
+      const storageState = await loginAndCache(b, { userId: socket.data.userId, ...activeAuth });
+      socket.emit('auth_status', { stage: 'logged_in' });
+      // Reload current page with fresh context
+      const currentUrl = page ? page.url() : activeAuth.loginUrl;
+      await teardown();
+      context = await b.newContext({ viewport: VIEWPORT, storageState });
+      page = await context.newPage();
+      await attachPageListeners(page);
+      await page.goto(currentUrl, { waitUntil: 'domcontentloaded' });
+      await injectInspector(page);
+      await startScreencast(context, page);
+      socket.emit('session_started', { success: true, url: currentUrl });
+    } catch (e) {
+      socket.emit('auth_status', { stage: 'login_failed', error: e.message });
+    }
+  });
+
   socket.on('run_flow', async ({ url, steps }) => {
     try {
-      if (!browser) browser = await chromium.launch({ headless: true });
-      context = await browser.newContext();
+      await teardown();
+      const b = await getBrowser();
+      context = await b.newContext();
       page = await context.newPage();
-      
       socket.emit('run_started', { url });
       await page.goto(url, { waitUntil: 'domcontentloaded' });
 
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         socket.emit('step_running', { stepId: step.id });
-        
         try {
-          if (step.kind === 'navigate') {
-            await page.goto(step.value || url, { waitUntil: 'domcontentloaded' });
-          } else if (step.kind === 'wait') {
-            await page.waitForTimeout(parseInt(step.value || '1000'));
-          } else if (step.kind === 'click' && step.selector) {
-            try {
-              await page.click(step.selector, { timeout: 3000 });
-            } catch (err) {
-              // Self-healing attempt!
+          if (step.kind === 'navigate') await page.goto(step.value || url, { waitUntil: 'domcontentloaded' });
+          else if (step.kind === 'wait') await page.waitForTimeout(parseInt(step.value || '1000'));
+          else if (step.kind === 'click' && step.selector) {
+            try { await page.click(step.selector, { timeout: 3000 }); }
+            catch {
               socket.emit('step_healing', { stepId: step.id, oldSelector: step.selector });
               const dom = await page.evaluate(() => document.body.innerHTML);
               const prompt = `The UI test failed to click on "${step.selector}". Here is the page HTML:\n${dom.substring(0, 15000)}\nFind a robust alternative selector for this element. Return only the string for the selector.`;
-              
               let newSelector = '';
               const apiKey = process.env.GEMINI_API_KEY;
               if (apiKey && apiKey.startsWith('gsk_')) {
                 const groq = new Groq({ apiKey });
-                const chatCompletion = await groq.chat.completions.create({
-                  model: 'llama-3.3-70b-versatile',
-                  messages: [
-                    { role: 'user', content: prompt }
-                  ]
-                });
-                newSelector = chatCompletion.choices?.[0]?.message?.content?.trim() || '';
-
-                /* OLD AXIOS CALL (Commented Out)
-                const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-                  model: 'llama-3.3-70b-versatile',
-                  messages: [
-                    { role: 'user', content: prompt }
-                  ]
-                }, {
-                  headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json'
-                  }
-                });
-                newSelector = response.data?.choices?.[0]?.message?.content?.trim() || '';
-                */
-              } else {
-                /*
-                const response = await ai.models.generateContent({
-                  model: 'gemini-3-flash',
-                  contents: prompt,
-                });
-                newSelector = response.text.trim();
-                */
-                throw new Error("No Groq key configured in GEMINI_API_KEY env");
-              }
-              
-              if (newSelector.startsWith('```')) {
-                newSelector = newSelector.replace(/```[a-z]*\n?/g, '').replace(/\n?```$/g, '');
-              }
-              
+                const r = await groq.chat.completions.create({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }] });
+                newSelector = r.choices?.[0]?.message?.content?.trim() || '';
+              } else { throw new Error('No Groq key configured in GEMINI_API_KEY env'); }
+              if (newSelector.startsWith('```')) newSelector = newSelector.replace(/```[a-z]*\n?/g, '').replace(/\n?```$/g, '');
               socket.emit('step_healed', { stepId: step.id, oldSelector: step.selector, newSelector });
-              
-              // Retry with new selector
               await page.click(newSelector, { timeout: 3000 });
             }
           } else if (step.kind === 'input' && step.selector) {
             await page.fill(step.selector, step.value || '', { timeout: 3000 });
           }
-          
           socket.emit('step_completed', { stepId: step.id, status: 'pass' });
         } catch (error) {
-          console.error(`Step failed: ${step.id}`, error);
           socket.emit('step_completed', { stepId: step.id, status: 'fail', error: error.message });
-          break; // Stop execution on failure
+          break;
         }
       }
       socket.emit('run_finished', { success: true });
     } catch (error) {
-      console.error(error);
       socket.emit('run_finished', { success: false, error: error.message });
     }
   });
@@ -329,61 +316,25 @@ io.on('connection', (socket) => {
     try { await page.evaluate((m) => { window.__qaforgeMode = m; }, mode); } catch {}
   });
 
-  // Forward user interactions to the live page
   socket.on('forward_click', async ({ x, y, button }) => {
     if (!page) return;
-    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); }
-    catch (e) { console.error('forward_click', e.message); }
+    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); } catch (e) { console.error('forward_click', e.message); }
   });
-
   socket.on('inspect_click', async ({ x, y, button }) => {
     if (!page) return;
-    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); }
-    catch (e) { console.error('inspect_click', e.message); }
+    try { await page.mouse.click(Math.round(x), Math.round(y), { button: button || 'left' }); } catch (e) { console.error('inspect_click', e.message); }
   });
-
   socket.on('forward_scroll', async ({ x, y, deltaX, deltaY }) => {
     if (!page) return;
-    try {
-      await page.mouse.move(Math.round(x), Math.round(y));
-      await page.mouse.wheel(deltaX || 0, deltaY || 0);
-    } catch (e) { console.error('forward_scroll', e.message); }
+    try { await page.mouse.move(Math.round(x), Math.round(y)); await page.mouse.wheel(deltaX || 0, deltaY || 0); } catch (e) { console.error('forward_scroll', e.message); }
   });
+  socket.on('forward_move', async ({ x, y }) => { if (!page) return; try { await page.mouse.move(Math.round(x), Math.round(y)); } catch {} });
+  socket.on('forward_key', async ({ key }) => { if (!page) return; try { await page.keyboard.press(key); } catch (e) { console.error('forward_key', e.message); } });
+  socket.on('forward_type', async ({ text }) => { if (!page) return; try { await page.keyboard.type(text); } catch (e) { console.error('forward_type', e.message); } });
 
-  socket.on('forward_move', async ({ x, y }) => {
-    if (!page) return;
-    try { await page.mouse.move(Math.round(x), Math.round(y)); }
-    catch {}
-  });
-
-  socket.on('forward_key', async ({ key }) => {
-    if (!page) return;
-    try { await page.keyboard.press(key); } catch (e) { console.error('forward_key', e.message); }
-  });
-
-  socket.on('forward_type', async ({ text }) => {
-    if (!page) return;
-    try { await page.keyboard.type(text); } catch (e) { console.error('forward_type', e.message); }
-  });
-
-  socket.on('stop_session', async () => {
-    if (page) {
-      await page.close().catch(() => {});
-      page = null;
-    }
-    if (context) {
-      await context.close().catch(() => {});
-      context = null;
-    }
-    socket.emit('session_stopped');
-  });
-
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-  });
+  socket.on('stop_session', async () => { await teardown(); socket.emit('session_stopped'); });
+  socket.on('disconnect', async () => { console.log('Client disconnected:', socket.id); await teardown(); });
 });
 
 const PORT = process.env.PORT || 4000;
-httpServer.listen(PORT, () => {
-  console.log(`Automation Server running on port ${PORT}`);
-});
+httpServer.listen(PORT, () => console.log(`Automation Server running on port ${PORT}`));
