@@ -46,6 +46,8 @@ function WorkspacePage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [mode, setMode] = useState<'interact' | 'inspect'>('interact');
   const [viewport, setViewport] = useState({ width: 1280, height: 800 });
+  const [recipe, setRecipe] = useState<LoginRecipe>(() => loadRecipe(testId) ?? emptyRecipe);
+  const [authStage, setAuthStage] = useState<string>("");
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
