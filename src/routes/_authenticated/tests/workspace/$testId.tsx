@@ -120,17 +120,29 @@ function WorkspacePage() {
     return { x: Math.max(0, Math.min(viewport.width, localX)), y: Math.max(0, Math.min(viewport.height, localY)) };
   };
 
+  const hasRecipe = !!(recipe.loginUrl && recipe.username);
+
   const toggleRecording = () => {
     if (isRecording) {
       socketRef.current?.emit("stop_session");
       setRecording(false);
       setScreencastFrame(null);
+      setAuthStage("");
     } else {
       if (!urlInput) return toast.error("Please enter a URL");
-      socketRef.current?.emit("start_session", { url: urlInput });
+      const auth = hasRecipe ? recipe : undefined;
+      socketRef.current?.emit("start_session", { url: urlInput, auth });
       setRecording(true);
     }
   };
+
+  const handleRelogin = () => {
+    if (!hasRecipe) return toast.error("Configure a Login Recipe first");
+    socketRef.current?.emit("relogin");
+  };
+
+  const persistRecipe = (next: LoginRecipe) => { setRecipe(next); saveRecipe(testId, next); };
+  const wipeRecipe = () => { setRecipe(emptyRecipe); clearRecipe(testId); toast.success("Recipe cleared"); };
 
   const copySelector = useCallback((text: string) => {
     navigator.clipboard.writeText(text);
