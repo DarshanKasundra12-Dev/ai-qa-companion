@@ -65,8 +65,8 @@ function Landing() {
                 <div className="col-span-7 p-4 border-r border-border/60 space-y-1.5">
                   <div className="text-primary">▶ run login-flow.test</div>
                   <div className="text-muted-foreground">  ✓ navigate https://app.example.com/login <span className="text-success">120ms</span></div>
-                  <div className="text-muted-foreground">  ✓ fill #email "user@acme.io" <span className="text-success">8ms</span></div>
-                  <div className="text-muted-foreground">  ✓ fill #password "••••••••" <span className="text-success">6ms</span></div>
+                  <div className="text-muted-foreground">{`  ✓ fill #email "user@acme.io"`} <span className="text-success">8ms</span></div>
+                  <div className="text-muted-foreground">{`  ✓ fill #password "••••••••"`} <span className="text-success">6ms</span></div>
                   <div className="text-muted-foreground">  ✓ click button[type=submit] <span className="text-success">14ms</span></div>
                   <div className="text-info">  ↳ POST /api/v1/auth/login <span className="text-success">200 · 213ms</span></div>
                   <div className="text-muted-foreground">  ✓ assert url=/dashboard <span className="text-success">300ms</span></div>

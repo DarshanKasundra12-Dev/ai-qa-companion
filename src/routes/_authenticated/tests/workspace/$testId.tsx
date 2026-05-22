@@ -5,14 +5,18 @@ import { useWorkspaceStore } from "@/lib/workspace-store";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Play, Square, Activity, MousePointer2, Globe, Shield, Eye,
-  Network, Copy, AlertTriangle, CheckCircle2, Info, ArrowLeft,
-  Wifi, WifiOff, Sparkles, Code, Bug
+  Network, Copy, CheckCircle2, ArrowLeft,
+  Wifi, WifiOff, Sparkles, Code, KeyRound, RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { askAiAssistant } from "@/lib/ai.functions";
+import { supabase } from "@/integrations/supabase/client";
+import { loadRecipe, saveRecipe, clearRecipe, emptyRecipe, type LoginRecipe } from "@/lib/login-recipe-store";
 
 export const Route = createFileRoute("/_authenticated/tests/workspace/$testId")({
   component: WorkspacePage
@@ -42,63 +46,57 @@ function WorkspacePage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [mode, setMode] = useState<'interact' | 'inspect'>('interact');
   const [viewport, setViewport] = useState({ width: 1280, height: 800 });
+  const [recipe, setRecipe] = useState<LoginRecipe>(() => loadRecipe(testId) ?? emptyRecipe);
+  const [authStage, setAuthStage] = useState<string>("");
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     clearWorkspace();
-    const socket = io("http://localhost:4000");
-    socketRef.current = socket;
+    let socket: Socket | null = null;
+    let disposed = false;
 
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => { setConnected(false); setRecording(false); });
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (disposed) return;
+      socket = io("http://localhost:4000", { auth: { token } });
+      socketRef.current = socket;
 
-    socket.on("session_started", (data) => {
-      if (data.success) {
-        toast.success("Browser session started");
-        setTargetUrl(data.url);
-      } else {
-        toast.error("Failed: " + data.error);
-        setRecording(false);
-      }
-    });
-
-    socket.on("session_stopped", () => {
-      toast.info("Session stopped");
-      setRecording(false);
-      setScreencastFrame(null);
-    });
-
-    socket.on("network_request", (req) => {
-      addNetworkRequest({
-        id: Math.random().toString(36).substring(7),
-        url: req.url,
-        method: req.method,
-        resourceType: req.resourceType,
-        timestamp: Date.now()
+      socket.on("connect", () => setConnected(true));
+      socket.on("connect_error", (err) => {
+        setConnected(false);
+        toast.error("Socket auth failed: " + err.message);
       });
-    });
+      socket.on("disconnect", () => { setConnected(false); setRecording(false); });
 
-    socket.on("network_response", (res) => {
-      updateNetworkResponse(res.url, res.status, res.body);
-    });
+      socket.on("session_started", (d) => {
+        if (d.success) { toast.success("Browser session started"); setTargetUrl(d.url); }
+        else { toast.error("Failed: " + d.error); setRecording(false); }
+      });
+      socket.on("session_stopped", () => { toast.info("Session stopped"); setRecording(false); setScreencastFrame(null); });
 
-    socket.on("security_issues", (data) => {
-      addSecurityIssues(data.url, data.issues);
-    });
+      socket.on("auth_status", (s) => {
+        setAuthStage(s.stage);
+        if (s.stage === "logging_in") toast.info("Logging in to target app…");
+        else if (s.stage === "logged_in") toast.success("Logged in — session ready");
+        else if (s.stage === "using_cached") toast.success("Reusing cached login");
+        else if (s.stage === "login_failed") toast.error("Login failed: " + (s.error || ""));
+      });
+      socket.on("auth_expired", () => {
+        toast.warning("Target returned 401 — click Re-login to refresh", { duration: 6000 });
+      });
 
-    socket.on("element_selected", (elData) => {
-      setSelectedElement(elData);
-      setActiveTab('inspector');
-      toast.success("Element captured");
-    });
+      socket.on("network_request", (req) => {
+        addNetworkRequest({ id: Math.random().toString(36).substring(7), url: req.url, method: req.method, resourceType: req.resourceType, timestamp: Date.now() });
+      });
+      socket.on("network_response", (res) => updateNetworkResponse(res.url, res.status, res.body));
+      socket.on("security_issues", (d) => addSecurityIssues(d.url, d.issues));
+      socket.on("element_selected", (elData) => { setSelectedElement(elData); setActiveTab('inspector'); toast.success("Element captured"); });
+      socket.on("screencast_frame", (frame) => setScreencastFrame(`data:image/jpeg;base64,${frame.data}`));
+      socket.on("viewport_info", (vp) => setViewport(vp));
+    })();
 
-    socket.on("screencast_frame", (frame) => {
-      setScreencastFrame(`data:image/jpeg;base64,${frame.data}`);
-    });
-
-    socket.on("viewport_info", (vp) => setViewport(vp));
-
-    return () => { socket.disconnect(); };
+    return () => { disposed = true; socket?.disconnect(); };
   }, []);
 
   // Push mode changes to server
@@ -122,17 +120,29 @@ function WorkspacePage() {
     return { x: Math.max(0, Math.min(viewport.width, localX)), y: Math.max(0, Math.min(viewport.height, localY)) };
   };
 
+  const hasRecipe = !!(recipe.loginUrl && recipe.username);
+
   const toggleRecording = () => {
     if (isRecording) {
       socketRef.current?.emit("stop_session");
       setRecording(false);
       setScreencastFrame(null);
+      setAuthStage("");
     } else {
       if (!urlInput) return toast.error("Please enter a URL");
-      socketRef.current?.emit("start_session", { url: urlInput });
+      const auth = hasRecipe ? recipe : undefined;
+      socketRef.current?.emit("start_session", { url: urlInput, auth });
       setRecording(true);
     }
   };
+
+  const handleRelogin = () => {
+    if (!hasRecipe) return toast.error("Configure a Login Recipe first");
+    socketRef.current?.emit("relogin");
+  };
+
+  const persistRecipe = (next: LoginRecipe) => { setRecipe(next); saveRecipe(testId, next); };
+  const wipeRecipe = () => { setRecipe(emptyRecipe); clearRecipe(testId); toast.success("Recipe cleared"); };
 
   const copySelector = useCallback((text: string) => {
     navigator.clipboard.writeText(text);
@@ -249,6 +259,76 @@ function WorkspacePage() {
         >
           {isRecording ? <><Square className="size-3" /> Stop</> : <><Play className="size-3" /> Start Session</>}
         </Button>
+
+        {/* Login Recipe popover */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              className={`h-8 text-xs gap-1.5 shrink-0 ${hasRecipe ? 'border-primary/50 text-primary' : ''}`}
+              title="Configure authentication for this target"
+            >
+              <KeyRound className="size-3" />
+              <span className="hidden md:inline">{hasRecipe ? 'Auth' : 'Login Recipe'}</span>
+              {hasRecipe && <span className="size-1.5 rounded-full bg-primary animate-pulse" />}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-96 space-y-3" align="end">
+            <div>
+              <div className="text-xs font-semibold">Login Recipe</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Playwright will log in inside its own browser so cookies/JWT live in the session.
+                Cached per (user, login URL, username).
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Login URL</Label>
+                <Input value={recipe.loginUrl} onChange={(e) => persistRecipe({ ...recipe, loginUrl: e.target.value })} placeholder="https://app.example.com/login" className="h-8 text-xs mono" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Username</Label>
+                  <Input value={recipe.username} onChange={(e) => persistRecipe({ ...recipe, username: e.target.value })} className="h-8 text-xs mono" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Password</Label>
+                  <Input type="password" value={recipe.password} onChange={(e) => persistRecipe({ ...recipe, password: e.target.value })} className="h-8 text-xs mono" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Selectors</Label>
+                <Input value={recipe.selectors.username} onChange={(e) => persistRecipe({ ...recipe, selectors: { ...recipe.selectors, username: e.target.value } })} placeholder="Username selector e.g. #email" className="h-7 text-[11px] mono" />
+                <Input value={recipe.selectors.password} onChange={(e) => persistRecipe({ ...recipe, selectors: { ...recipe.selectors, password: e.target.value } })} placeholder="Password selector e.g. #password" className="h-7 text-[11px] mono" />
+                <Input value={recipe.selectors.submit} onChange={(e) => persistRecipe({ ...recipe, selectors: { ...recipe.selectors, submit: e.target.value } })} placeholder='Submit selector e.g. button[type="submit"]' className="h-7 text-[11px] mono" />
+              </div>
+              {authStage && (
+                <div className="text-[10px] mono text-muted-foreground border-t border-border/30 pt-2">
+                  status: <span className="text-primary">{authStage}</span>
+                </div>
+              )}
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" variant="ghost" className="h-7 text-[11px] flex-1" onClick={wipeRecipe}>Clear</Button>
+                <Button size="sm" className="h-7 text-[11px] flex-1 gap-1" onClick={handleRelogin} disabled={!isRecording || !hasRecipe}>
+                  <RefreshCw className="size-3" /> Re-login now
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* Re-login quick button (only when active) */}
+        {isRecording && hasRecipe && (
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={handleRelogin}
+            title="Re-login (clears cached session)"
+          >
+            <RefreshCw className="size-3" />
+          </Button>
+        )}
 
         {/* Inspect / Interact toggle */}
         <div className="hidden sm:flex items-center rounded-md border border-border/50 overflow-hidden shrink-0">
