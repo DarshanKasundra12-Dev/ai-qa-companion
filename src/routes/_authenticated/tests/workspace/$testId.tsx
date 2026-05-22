@@ -260,6 +260,76 @@ function WorkspacePage() {
           {isRecording ? <><Square className="size-3" /> Stop</> : <><Play className="size-3" /> Start Session</>}
         </Button>
 
+        {/* Login Recipe popover */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              className={`h-8 text-xs gap-1.5 shrink-0 ${hasRecipe ? 'border-primary/50 text-primary' : ''}`}
+              title="Configure authentication for this target"
+            >
+              <KeyRound className="size-3" />
+              <span className="hidden md:inline">{hasRecipe ? 'Auth' : 'Login Recipe'}</span>
+              {hasRecipe && <span className="size-1.5 rounded-full bg-primary animate-pulse" />}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-96 space-y-3" align="end">
+            <div>
+              <div className="text-xs font-semibold">Login Recipe</div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Playwright will log in inside its own browser so cookies/JWT live in the session.
+                Cached per (user, login URL, username).
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Login URL</Label>
+                <Input value={recipe.loginUrl} onChange={(e) => persistRecipe({ ...recipe, loginUrl: e.target.value })} placeholder="https://app.example.com/login" className="h-8 text-xs mono" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Username</Label>
+                  <Input value={recipe.username} onChange={(e) => persistRecipe({ ...recipe, username: e.target.value })} className="h-8 text-xs mono" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Password</Label>
+                  <Input type="password" value={recipe.password} onChange={(e) => persistRecipe({ ...recipe, password: e.target.value })} className="h-8 text-xs mono" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Selectors</Label>
+                <Input value={recipe.selectors.username} onChange={(e) => persistRecipe({ ...recipe, selectors: { ...recipe.selectors, username: e.target.value } })} placeholder="Username selector e.g. #email" className="h-7 text-[11px] mono" />
+                <Input value={recipe.selectors.password} onChange={(e) => persistRecipe({ ...recipe, selectors: { ...recipe.selectors, password: e.target.value } })} placeholder="Password selector e.g. #password" className="h-7 text-[11px] mono" />
+                <Input value={recipe.selectors.submit} onChange={(e) => persistRecipe({ ...recipe, selectors: { ...recipe.selectors, submit: e.target.value } })} placeholder='Submit selector e.g. button[type="submit"]' className="h-7 text-[11px] mono" />
+              </div>
+              {authStage && (
+                <div className="text-[10px] mono text-muted-foreground border-t border-border/30 pt-2">
+                  status: <span className="text-primary">{authStage}</span>
+                </div>
+              )}
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" variant="ghost" className="h-7 text-[11px] flex-1" onClick={wipeRecipe}>Clear</Button>
+                <Button size="sm" className="h-7 text-[11px] flex-1 gap-1" onClick={handleRelogin} disabled={!isRecording || !hasRecipe}>
+                  <RefreshCw className="size-3" /> Re-login now
+                </Button>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* Re-login quick button (only when active) */}
+        {isRecording && hasRecipe && (
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={handleRelogin}
+            title="Re-login (clears cached session)"
+          >
+            <RefreshCw className="size-3" />
+          </Button>
+        )}
+
         {/* Inspect / Interact toggle */}
         <div className="hidden sm:flex items-center rounded-md border border-border/50 overflow-hidden shrink-0">
           <button
