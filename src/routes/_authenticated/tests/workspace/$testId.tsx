@@ -5,14 +5,18 @@ import { useWorkspaceStore } from "@/lib/workspace-store";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Play, Square, Activity, MousePointer2, Globe, Shield, Eye,
-  Network, Copy, AlertTriangle, CheckCircle2, Info, ArrowLeft,
-  Wifi, WifiOff, Sparkles, Code, Bug
+  Network, Copy, CheckCircle2, ArrowLeft,
+  Wifi, WifiOff, Sparkles, Code, KeyRound, RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { askAiAssistant } from "@/lib/ai.functions";
+import { supabase } from "@/integrations/supabase/client";
+import { loadRecipe, saveRecipe, clearRecipe, emptyRecipe, type LoginRecipe } from "@/lib/login-recipe-store";
 
 export const Route = createFileRoute("/_authenticated/tests/workspace/$testId")({
   component: WorkspacePage
