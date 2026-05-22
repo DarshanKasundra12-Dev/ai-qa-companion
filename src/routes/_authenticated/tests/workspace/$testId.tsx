@@ -52,59 +52,51 @@ function WorkspacePage() {
 
   useEffect(() => {
     clearWorkspace();
-    const socket = io("http://localhost:4000");
-    socketRef.current = socket;
+    let socket: Socket | null = null;
+    let disposed = false;
 
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => { setConnected(false); setRecording(false); });
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (disposed) return;
+      socket = io("http://localhost:4000", { auth: { token } });
+      socketRef.current = socket;
 
-    socket.on("session_started", (data) => {
-      if (data.success) {
-        toast.success("Browser session started");
-        setTargetUrl(data.url);
-      } else {
-        toast.error("Failed: " + data.error);
-        setRecording(false);
-      }
-    });
-
-    socket.on("session_stopped", () => {
-      toast.info("Session stopped");
-      setRecording(false);
-      setScreencastFrame(null);
-    });
-
-    socket.on("network_request", (req) => {
-      addNetworkRequest({
-        id: Math.random().toString(36).substring(7),
-        url: req.url,
-        method: req.method,
-        resourceType: req.resourceType,
-        timestamp: Date.now()
+      socket.on("connect", () => setConnected(true));
+      socket.on("connect_error", (err) => {
+        setConnected(false);
+        toast.error("Socket auth failed: " + err.message);
       });
-    });
+      socket.on("disconnect", () => { setConnected(false); setRecording(false); });
 
-    socket.on("network_response", (res) => {
-      updateNetworkResponse(res.url, res.status, res.body);
-    });
+      socket.on("session_started", (d) => {
+        if (d.success) { toast.success("Browser session started"); setTargetUrl(d.url); }
+        else { toast.error("Failed: " + d.error); setRecording(false); }
+      });
+      socket.on("session_stopped", () => { toast.info("Session stopped"); setRecording(false); setScreencastFrame(null); });
 
-    socket.on("security_issues", (data) => {
-      addSecurityIssues(data.url, data.issues);
-    });
+      socket.on("auth_status", (s) => {
+        setAuthStage(s.stage);
+        if (s.stage === "logging_in") toast.info("Logging in to target app…");
+        else if (s.stage === "logged_in") toast.success("Logged in — session ready");
+        else if (s.stage === "using_cached") toast.success("Reusing cached login");
+        else if (s.stage === "login_failed") toast.error("Login failed: " + (s.error || ""));
+      });
+      socket.on("auth_expired", () => {
+        toast.warning("Target returned 401 — click Re-login to refresh", { duration: 6000 });
+      });
 
-    socket.on("element_selected", (elData) => {
-      setSelectedElement(elData);
-      setActiveTab('inspector');
-      toast.success("Element captured");
-    });
+      socket.on("network_request", (req) => {
+        addNetworkRequest({ id: Math.random().toString(36).substring(7), url: req.url, method: req.method, resourceType: req.resourceType, timestamp: Date.now() });
+      });
+      socket.on("network_response", (res) => updateNetworkResponse(res.url, res.status, res.body));
+      socket.on("security_issues", (d) => addSecurityIssues(d.url, d.issues));
+      socket.on("element_selected", (elData) => { setSelectedElement(elData); setActiveTab('inspector'); toast.success("Element captured"); });
+      socket.on("screencast_frame", (frame) => setScreencastFrame(`data:image/jpeg;base64,${frame.data}`));
+      socket.on("viewport_info", (vp) => setViewport(vp));
+    })();
 
-    socket.on("screencast_frame", (frame) => {
-      setScreencastFrame(`data:image/jpeg;base64,${frame.data}`);
-    });
-
-    socket.on("viewport_info", (vp) => setViewport(vp));
-
-    return () => { socket.disconnect(); };
+    return () => { disposed = true; socket?.disconnect(); };
   }, []);
 
   // Push mode changes to server
