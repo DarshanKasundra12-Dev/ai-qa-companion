@@ -1,5 +1,5 @@
 // Shared types for test flows
-export type StepKind = "navigate" | "click" | "input" | "wait" | "assert" | "scroll";
+export type StepKind = "navigate" | "click" | "input" | "wait" | "assert" | "scroll" | "press";
 
 export type TestStep = {
   id: string;
@@ -27,4 +27,5 @@ export const STEP_LABEL: Record<StepKind, string> = {
   wait: "Wait",
   assert: "Assert",
   scroll: "Scroll",
+  press: "Press Key",
 };

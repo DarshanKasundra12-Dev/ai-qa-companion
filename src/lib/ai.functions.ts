@@ -8,7 +8,7 @@ import path from "node:path";
 
 const StepSchema = z.object({
   id: z.string(),
-  kind: z.enum(["navigate", "click", "input", "wait", "assert", "scroll"]),
+  kind: z.enum(["navigate", "click", "input", "wait", "assert", "scroll", "press"]),
   selector: z.string().optional(),
   value: z.string().optional(),
   description: z.string().optional(),

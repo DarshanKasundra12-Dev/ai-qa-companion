@@ -36,7 +36,7 @@ function Dashboard() {
           <Link to="/api-tester">
             <Button variant="outline" className="gap-2"><Network className="size-4" /> API Tester</Button>
           </Link>
-          <Link to="/tests/workspace/new">
+          <Link to="/tests/new">
             <Button className="gap-2"><Plus className="size-4" /> Open Workspace</Button>
           </Link>
         </div>

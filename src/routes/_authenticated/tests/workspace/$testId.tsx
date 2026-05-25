@@ -14,6 +14,52 @@ import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { askAiAssistant } from "@/lib/ai.functions";
 
+function isSemanticId(id: string) {
+  if (!id) return false;
+  if (id.startsWith(':r') && id.endsWith(':')) return false; // React 18
+  if (/[0-9a-f]{8}-[0-9a-f]{4}/i.test(id)) return false; // UUID/GUID
+  if (/^(ember|jquery|radix|react-aria|next|__next|nuxt|gatsby|vue-aria|headlessui)-\d+/i.test(id)) return false;
+  if (/[a-zA-Z]+-?\d{2,}$/.test(id)) return false; // ember247, component-99
+  if (/^\d+$/.test(id)) return false;
+  return true;
+}
+
+function getShortCssPath(el: any) {
+  if (!el || !el.tagName) return "";
+  const tag = el.tagName.toLowerCase();
+  if (el.type) return `${tag}[type="${el.type}"]`;
+  if (el.href && !el.href.startsWith("data:") && el.href.length < 100) return `${tag}[href="${el.href}"]`;
+  if (el.title) return `${tag}[title="${el.title}"]`;
+  if (el.alt) return `${tag}[alt="${el.alt}"]`;
+  if (el.placeholder) return `${tag}[placeholder="${el.placeholder}"]`;
+  return tag;
+}
+
+function getPlaywrightLocator(el: any) {
+  if (!el) return "";
+  // 1st: data-testid, data-cy, data-qa
+  if (el.dataTestId) return `page.getByTestId('${el.dataTestId}')`;
+  if (el.dataCy) return `page.locator('[data-cy="${el.dataCy}"]')`;
+  if (el.dataQa) return `page.locator('[data-qa="${el.dataQa}"]')`;
+  // 2nd: aria-label, role + accessible name
+  if (el.ariaLabel) return `page.getByLabel('${el.ariaLabel}')`;
+  if (el.role) {
+    const nameOpt = el.name || el.text;
+    if (nameOpt) return `page.getByRole('${el.role}', { name: '${nameOpt.trim().replace(/'/g, "\\'")}' })`;
+    return `page.getByRole('${el.role}')`;
+  }
+  // 3rd: id (only if semantic)
+  if (el.id && isSemanticId(el.id)) return `page.locator('#${el.id}')`;
+  // 4th: name attribute
+  if (el.name) return `page.locator('[name="${el.name}"]')`;
+  // 5th: text
+  if (el.text && el.text.trim()) return `page.getByText('${el.text.trim().replace(/'/g, "\\'")}')`;  
+  // 6th: short CSS attribute path
+  const cssPath = getShortCssPath(el);
+  if (cssPath && cssPath !== el.tagName?.toLowerCase()) return `page.locator('${cssPath}')`;
+  return `page.locator('${el.tagName?.toLowerCase()}')`;
+}
+
 export const Route = createFileRoute("/_authenticated/tests/workspace/$testId")({
   component: WorkspacePage
 });
@@ -288,19 +334,39 @@ function WorkspacePage() {
                 <div className="space-y-2">
                   <label className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Quick Selectors</label>
                   <div className="space-y-1">
-                    {selectedElement.id && (
-                      <button onClick={() => copySelector(`#${selectedElement.id}`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors">
+                    {selectedElement.dataTestId && (
+                      <button onClick={() => copySelector(`[data-testid="${selectedElement.dataTestId}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy Test ID selector">
+                        [data-testid="{selectedElement.dataTestId}"]
+                      </button>
+                    )}
+                    {selectedElement.dataCy && (
+                      <button onClick={() => copySelector(`[data-cy="${selectedElement.dataCy}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy Data Cy selector">
+                        [data-cy="{selectedElement.dataCy}"]
+                      </button>
+                    )}
+                    {selectedElement.dataQa && (
+                      <button onClick={() => copySelector(`[data-qa="${selectedElement.dataQa}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy Data QA selector">
+                        [data-qa="{selectedElement.dataQa}"]
+                      </button>
+                    )}
+                    {selectedElement.ariaLabel && (
+                      <button onClick={() => copySelector(`[aria-label="${selectedElement.ariaLabel}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy Aria Label selector">
+                        [aria-label="{selectedElement.ariaLabel}"]
+                      </button>
+                    )}
+                    {selectedElement.id && isSemanticId(selectedElement.id) && (
+                      <button onClick={() => copySelector(`#${selectedElement.id}`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy ID selector">
                         #{selectedElement.id}
                       </button>
                     )}
-                    {selectedElement.dataTestId && (
-                      <button onClick={() => copySelector(`[data-testid="${selectedElement.dataTestId}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors">
-                        {`[data-testid="${selectedElement.dataTestId}"]`}
+                    {selectedElement.name && (
+                      <button onClick={() => copySelector(`[name="${selectedElement.name}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy Name selector">
+                        [name="{selectedElement.name}"]
                       </button>
                     )}
-                    {selectedElement.role && (
-                      <button onClick={() => copySelector(`[role="${selectedElement.role}"]`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors">
-                        role: {selectedElement.role}
+                    {selectedElement.text && selectedElement.text.trim() && (
+                      <button onClick={() => copySelector(`text="${selectedElement.text.trim().replace(/"/g, '\\"')}"`)} className="w-full text-left text-[10px] mono px-2 py-1 rounded bg-black/20 hover:bg-primary/10 border border-border/30 truncate transition-colors" title="Copy Text selector">
+                        text: {selectedElement.text.trim()}
                       </button>
                     )}
                   </div>
@@ -349,7 +415,7 @@ function WorkspacePage() {
                     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
                       e.preventDefault();
                       socketRef.current?.emit('forward_type', { text: e.key });
-                    } else if (['Enter','Backspace','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Escape','Delete','Home','End','PageUp','PageDown'].includes(e.key)) {
+                    } else if (['Enter', 'Backspace', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape', 'Delete', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
                       e.preventDefault();
                       socketRef.current?.emit('forward_key', { key: e.key });
                     }
@@ -456,11 +522,10 @@ function WorkspacePage() {
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium border-b-2 transition-colors ${
-                      activeTab === tab.key
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] font-medium border-b-2 transition-colors ${activeTab === tab.key
                         ? 'border-primary text-primary'
                         : 'border-transparent text-muted-foreground hover:text-foreground'
-                    }`}
+                      }`}
                   >
                     <tab.icon className="size-3.5" />
                     {tab.label}
@@ -485,13 +550,50 @@ function WorkspacePage() {
 
                         <div className="bg-black/20 p-2.5 rounded-lg border border-border/50">
                           <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-2">Selectors</div>
-                          <div className="space-y-1.5">
-                            {selectedElement.id && <SelectorRow label="ID" value={`#${selectedElement.id}`} score={95} onCopy={copySelector} />}
-                            {selectedElement.dataTestId && <SelectorRow label="Test ID" value={`[data-testid="${selectedElement.dataTestId}"]`} score={90} onCopy={copySelector} />}
-                            {selectedElement.role && <SelectorRow label="Role" value={`[role="${selectedElement.role}"]`} score={85} onCopy={copySelector} />}
-                            {selectedElement.ariaLabel && <SelectorRow label="Aria" value={`[aria-label="${selectedElement.ariaLabel}"]`} score={80} onCopy={copySelector} />}
+                          <div className="space-y-2">
+                            {/* 1st: data-testid, data-cy, data-qa */}
+                            {selectedElement.dataTestId && <SelectorRow label="Test ID" value={`[data-testid="${selectedElement.dataTestId}"]`} score={98} onCopy={copySelector} />}
+                            {selectedElement.dataCy && <SelectorRow label="Data Cy" value={`[data-cy="${selectedElement.dataCy}"]`} score={97} onCopy={copySelector} />}
+                            {selectedElement.dataQa && <SelectorRow label="Data QA" value={`[data-qa="${selectedElement.dataQa}"]`} score={96} onCopy={copySelector} />}
+                            
+                            {/* 2nd: aria-label, role + accessible name */}
+                            {selectedElement.ariaLabel && <SelectorRow label="Aria Label" value={`[aria-label="${selectedElement.ariaLabel}"]`} score={90} onCopy={copySelector} />}
+                            {selectedElement.role && selectedElement.name && <SelectorRow label="Role+Name" value={`[role="${selectedElement.role}"][name="${selectedElement.name}"]`} score={88} onCopy={copySelector} />}
+                            
+                            {/* 3rd: id — only if semantic */}
+                            {selectedElement.id && (
+                              isSemanticId(selectedElement.id) ? (
+                                <SelectorRow label="ID" value={`#${selectedElement.id}`} score={80} onCopy={copySelector} />
+                              ) : (
+                                <div className="flex items-center gap-1.5 text-[9px] text-yellow-500/80 italic ml-1">
+                                  <AlertTriangle className="size-3 text-yellow-500 shrink-0" />
+                                  <span>Skipped non-semantic ID: #{selectedElement.id}</span>
+                                </div>
+                              )
+                            )}
+                            
+                            {/* 4th: name attribute */}
                             {selectedElement.name && <SelectorRow label="Name" value={`[name="${selectedElement.name}"]`} score={75} onCopy={copySelector} />}
-                            {selectedElement.placeholder && <SelectorRow label="Placeholder" value={`[placeholder="${selectedElement.placeholder}"]`} score={60} onCopy={copySelector} />}
+                            
+                            {/* 5th: visible text content */}
+                            {selectedElement.text && selectedElement.text.trim() && (
+                              <div className="space-y-1">
+                                <SelectorRow label="Text" value={`text="${selectedElement.text.trim().replace(/"/g, '\\"')}"`} score={60} onCopy={copySelector} />
+                                <div className="text-[9px] text-yellow-500/80 flex items-center gap-1 ml-1">
+                                  <AlertTriangle className="size-2.5 shrink-0" />
+                                  <span>Text selector may be fragile if content is dynamic</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 6th: short CSS attribute path */}
+                            {(() => {
+                              const cssPath = getShortCssPath(selectedElement);
+                              if (cssPath && cssPath !== selectedElement.tagName?.toLowerCase()) {
+                                return <SelectorRow label="CSS Path" value={cssPath} score={50} onCopy={copySelector} />;
+                              }
+                              return null;
+                            })()}
                           </div>
                           <div className="text-[10px] text-emerald-400 mt-2 pt-2 border-t border-border/30 flex items-center gap-1">
                             <CheckCircle2 className="size-3" /> Best selector recommended above
@@ -516,25 +618,12 @@ function WorkspacePage() {
                         <div className="bg-black/20 p-2.5 rounded-lg border border-border/50">
                           <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Playwright Locator</div>
                           <div className="text-[10px] mono text-emerald-400 break-all">
-                            {selectedElement.dataTestId
-                              ? `page.getByTestId('${selectedElement.dataTestId}')`
-                              : selectedElement.role
-                              ? `page.getByRole('${selectedElement.role}'${selectedElement.name ? `, { name: '${selectedElement.name}' }` : ''})`
-                              : selectedElement.id
-                              ? `page.locator('#${selectedElement.id}')`
-                              : selectedElement.text
-                              ? `page.getByText('${selectedElement.text.slice(0, 30)}')`
-                              : `page.locator('${selectedElement.tagName?.toLowerCase()}')`
-                            }
+                            {getPlaywrightLocator(selectedElement)}
                           </div>
                         </div>
 
                         <Button className="w-full text-xs gap-1.5 mt-2" variant="outline" onClick={() => {
-                          const loc = selectedElement.dataTestId
-                            ? `page.getByTestId('${selectedElement.dataTestId}')`
-                            : selectedElement.id
-                            ? `page.locator('#${selectedElement.id}')`
-                            : `page.locator('${selectedElement.xpath}')`;
+                          const loc = getPlaywrightLocator(selectedElement);
                           copySelector(loc);
                         }}>
                           <Code className="size-3" /> Copy Playwright Locator

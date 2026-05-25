@@ -3,12 +3,13 @@ import { type TestStep, type StepKind, STEP_LABEL } from "@/lib/flow-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GripVertical, MousePointerClick, Keyboard, Navigation, Timer, CheckSquare, ArrowDown, Trash2, Plus } from "lucide-react";
+import { GripVertical, MousePointerClick, Keyboard, Navigation, Timer, CheckSquare, ArrowDown, Trash2, Plus, Activity } from "lucide-react";
 
 const KIND_ICON: Record<StepKind, React.ElementType> = {
   navigate: Navigation,
   click: MousePointerClick,
-  input: Keyboard,
+  input: Activity,
+  press: Keyboard,
   wait: Timer,
   assert: CheckSquare,
   scroll: ArrowDown,
@@ -93,7 +94,7 @@ export function StepBuilder({ steps, onChange }: { steps: TestStep[]; onChange: 
                   className="col-span-5 h-8 text-xs mono bg-input/60"
                 />
                 <Input
-                  placeholder={s.kind === "input" ? "value to type" : s.kind === "assert" ? "expected (text/url)" : s.kind === "wait" ? "milliseconds" : "note"}
+                  placeholder={s.kind === "input" ? "value to type" : s.kind === "press" ? "key (e.g. Enter)" : s.kind === "assert" ? "expected (text/url)" : s.kind === "wait" ? "milliseconds" : "note"}
                   value={s.kind === "navigate" ? (s.description ?? "") : (s.value ?? "")}
                   onChange={(e) => s.kind === "navigate" ? update(s.id, { description: e.target.value }) : update(s.id, { value: e.target.value })}
                   className="col-span-4 h-8 text-xs mono bg-input/60"
