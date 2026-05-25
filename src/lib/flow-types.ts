@@ -1,10 +1,31 @@
 // Shared types for test flows
 export type StepKind = "navigate" | "click" | "input" | "wait" | "assert" | "scroll" | "press";
 
+// Multi-signal fingerprint captured at record time. Used by the universal
+// resolver at replay time instead of a single brittle CSS selector.
+export type ElementFingerprint = {
+  role?: string;
+  accessibleName?: string;
+  tagName: string;
+  visibleText?: string;
+  iconClass?: string | null;       // edit | delete | close | menu | add | search | back | svg:<hash>
+  testId?: string;
+  ariaLabel?: string;
+  name?: string;
+  href?: string;
+  placeholder?: string;
+  // Container that disambiguates repeated rows/cards
+  containerRole?: string;
+  containerKeyText?: string;
+  // Structural hint
+  ancestorRoles?: string[];
+};
+
 export type TestStep = {
   id: string;
   kind: StepKind;
-  selector?: string;
+  selector?: string;                  // legacy / manual fallback
+  fingerprint?: ElementFingerprint;   // preferred — used by universal resolver
   value?: string;
   description?: string;
 };
