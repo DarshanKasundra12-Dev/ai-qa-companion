@@ -377,40 +377,95 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Ensure resolver helpers exist on the page (script may not have been injected by run_flow's fresh context)
+  async function ensureResolverHelpers(p) {
+    const has = await p.evaluate(() => typeof window.__qaforgeResolve === 'function').catch(() => false);
+    if (has) return;
+    await injectInspector(p); // injects helpers + listeners (mode stays 'interact' by default)
+  }
+
+  // Universal resolver: tag matching element with [data-qaforge-target], return a locator for it
+  async function resolveFingerprint(p, fp) {
+    await ensureResolverHelpers(p);
+    // Clear any previous tag
+    await p.evaluate(() => document.querySelectorAll('[data-qaforge-target]').forEach(e => e.removeAttribute('data-qaforge-target')));
+    const res = await p.evaluate((f) => window.__qaforgeResolve(f), fp);
+    if (!res) return null;
+    return p.locator('[data-qaforge-target="1"]').first();
+  }
+
   socket.on('run_flow', async ({ url, steps }) => {
     try {
       await teardown();
       const b = await getBrowser();
-      context = await b.newContext();
+      context = await b.newContext({ viewport: VIEWPORT });
       page = await context.newPage();
       socket.emit('run_started', { url });
       await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await injectInspector(page);
 
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         socket.emit('step_running', { stepId: step.id });
         try {
-          if (step.kind === 'navigate') await page.goto(step.value || url, { waitUntil: 'domcontentloaded' });
+          if (step.kind === 'navigate') {
+            await page.goto(step.value || url, { waitUntil: 'domcontentloaded' });
+            await injectInspector(page);
+          }
           else if (step.kind === 'wait') await page.waitForTimeout(parseInt(step.value || '1000'));
-          else if (step.kind === 'click' && step.selector) {
-            try { await page.click(step.selector, { timeout: 3000 }); }
-            catch {
-              socket.emit('step_healing', { stepId: step.id, oldSelector: step.selector });
-              const dom = await page.evaluate(() => document.body.innerHTML);
-              const prompt = `The UI test failed to click on "${step.selector}". Here is the page HTML:\n${dom.substring(0, 15000)}\nFind a robust alternative selector for this element. Return only the string for the selector.`;
-              let newSelector = '';
-              const apiKey = process.env.GEMINI_API_KEY;
-              if (apiKey && apiKey.startsWith('gsk_')) {
-                const groq = new Groq({ apiKey });
-                const r = await groq.chat.completions.create({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }] });
-                newSelector = r.choices?.[0]?.message?.content?.trim() || '';
-              } else { throw new Error('No Groq key configured in GEMINI_API_KEY env'); }
-              if (newSelector.startsWith('```')) newSelector = newSelector.replace(/```[a-z]*\n?/g, '').replace(/\n?```$/g, '');
-              socket.emit('step_healed', { stepId: step.id, oldSelector: step.selector, newSelector });
-              await page.click(newSelector, { timeout: 3000 });
+          else if (step.kind === 'click') {
+            let locator = null;
+            // Preferred path: fingerprint resolver
+            if (step.fingerprint) {
+              locator = await resolveFingerprint(page, step.fingerprint);
             }
-          } else if (step.kind === 'input' && step.selector) {
-            await page.fill(step.selector, step.value || '', { timeout: 3000 });
+            if (!locator && step.selector) {
+              locator = page.locator(step.selector).first();
+            }
+            if (!locator) throw new Error('No fingerprint or selector for click step');
+
+            try {
+              await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+              await locator.click({ timeout: 4000 });
+            } catch (clickErr) {
+              // AI heal: ask for an updated fingerprint patch using compact AX-ish snapshot
+              socket.emit('step_healing', { stepId: step.id, fingerprint: step.fingerprint, selector: step.selector });
+              const apiKey = process.env.GEMINI_API_KEY;
+              if (!apiKey || !apiKey.startsWith('gsk_')) throw clickErr;
+
+              const snapshot = await page.evaluate(() => {
+                const rows = [];
+                document.querySelectorAll('button,a,[role=button],[role=link],[role=menuitem],input,select,textarea').forEach((el, i) => {
+                  if (i > 200) return;
+                  const r = el.getBoundingClientRect();
+                  if (r.width < 2 || r.height < 2) return;
+                  rows.push({
+                    tag: el.tagName,
+                    role: el.getAttribute('role') || null,
+                    name: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || '').trim().slice(0, 60),
+                    testId: el.getAttribute('data-testid') || null,
+                    href: el.getAttribute('href') || null,
+                    placeholder: el.getAttribute('placeholder') || null,
+                  });
+                });
+                return rows;
+              });
+              const prompt = `Original target fingerprint:\n${JSON.stringify(step.fingerprint || { selector: step.selector }, null, 2)}\n\nVisible actionable elements on the page (JSON):\n${JSON.stringify(snapshot).slice(0, 12000)}\n\nReturn ONLY a JSON object matching this shape (fields optional, omit unknown): {"role":"","accessibleName":"","iconClass":"","testId":"","ariaLabel":"","visibleText":"","tagName":"","containerKeyText":""}. No prose, no code fences.`;
+              const groq = new Groq({ apiKey });
+              const r = await groq.chat.completions.create({ model: 'llama-3.3-70b-versatile', messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' } });
+              const healed = JSON.parse(r.choices?.[0]?.message?.content || '{}');
+              socket.emit('step_healed', { stepId: step.id, fingerprint: healed });
+              const healedLoc = await resolveFingerprint(page, healed);
+              if (!healedLoc) throw clickErr;
+              await healedLoc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+              await healedLoc.click({ timeout: 4000 });
+            }
+          } else if (step.kind === 'input') {
+            let locator = null;
+            if (step.fingerprint) locator = await resolveFingerprint(page, step.fingerprint);
+            if (!locator && step.selector) locator = page.locator(step.selector).first();
+            if (!locator) throw new Error('No fingerprint or selector for input step');
+            await locator.fill(step.value || '', { timeout: 4000 });
           }
           socket.emit('step_completed', { stepId: step.id, status: 'pass' });
         } catch (error) {
@@ -423,6 +478,7 @@ io.on('connection', (socket) => {
       socket.emit('run_finished', { success: false, error: error.message });
     }
   });
+
 
   socket.on('set_mode', async ({ mode }) => {
     if (!page) return;
