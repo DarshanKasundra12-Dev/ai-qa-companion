@@ -226,11 +226,9 @@ io.on('connection', (socket) => {
       }
       function __xpath(el){ if(el.id) return 'id("'+el.id+'")'; if(el===document.body) return el.tagName; let ix=0; const sib=el.parentNode?.childNodes||[]; for(let i=0;i<sib.length;i++){const s=sib[i]; if(s===el) return __xpath(el.parentNode)+'/'+el.tagName+'['+(ix+1)+']'; if(s.nodeType===1 && s.tagName===el.tagName) ix++;} return el.tagName; }
       function __buildFingerprint(target){
-        // Normalize svg/icon clicks → closest real actionable
         const norm = target.closest('button,a,[role=button],[role=link],[role=menuitem],input,select,textarea,[tabindex]') || target;
         const container = __containerOf(norm);
-        return {
-          // New universal fingerprint fields
+        const fp = {
           tagName: norm.tagName,
           role: __computedRole(norm),
           accessibleName: __accName(norm),
@@ -244,14 +242,16 @@ io.on('connection', (socket) => {
           containerRole: container ? (__computedRole(container) || container.tagName.toLowerCase()) : undefined,
           containerKeyText: __keyText(container),
           ancestorRoles: __ancestorRoles(norm),
-          // Legacy fields (kept for inspector UI back-compat)
+        };
+        return {
+          ...fp,
+          fingerprint: fp,
+          // Legacy fields for inspector UI back-compat
           id: norm.id || '',
           className: typeof norm.className === 'string' ? norm.className : '',
           text: (norm.innerText || '').trim().slice(0, 50),
           dataTestId: norm.getAttribute('data-testid') || '',
           xpath: __xpath(norm),
-          // Wrap the resolver-relevant fields under .fingerprint for the runner
-          fingerprint: undefined, // filled below
         };
       }
       // Expose to the resolver (called from page.evaluate at replay time)
