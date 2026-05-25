@@ -164,6 +164,120 @@ io.on('connection', (socket) => {
     await p.addStyleTag({ content: `.qaforge-highlight{outline:2px dashed #ff00ff !important;background-color:rgba(255,0,255,0.1) !important;cursor:crosshair !important;}` });
     await p.addScriptTag({ content: `
       window.__qaforgeMode = 'interact';
+
+      // ---- Universal fingerprint helpers (record + resolve share this code) ----
+      const ICON_RE = {
+        edit:   /edit|pencil/i,
+        delete: /delete|trash|remove|bin/i,
+        close:  /close|dismiss|^x$|x-mark|cross/i,
+        menu:   /menu|more|kebab|dots|ellipsis/i,
+        search: /search|magnify/i,
+        add:    /add|plus|create|new/i,
+        back:   /back|chevron-left|arrow-left/i,
+        next:   /next|chevron-right|arrow-right/i,
+      };
+      function __hash(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return Math.abs(h).toString(36);}
+      function __detectIcon(el){
+        const btn = el.closest('button,a,[role=button]') || el;
+        const sig = [
+          btn.getAttribute('aria-label'), btn.getAttribute('title'),
+          btn.getAttribute('data-testid'), btn.className,
+          btn.querySelector('svg')?.getAttribute('class') || '',
+          btn.querySelector('use')?.getAttribute('href') || '',
+          btn.querySelector('i')?.className || '',
+        ].filter(Boolean).join(' ');
+        for (const [name, re] of Object.entries(ICON_RE)) if (re.test(sig)) return name;
+        const d = btn.querySelector('svg path[d]')?.getAttribute('d');
+        return d ? 'svg:' + __hash(d.slice(0,80)) : null;
+      }
+      function __computedRole(el){
+        const r = el.getAttribute('role'); if (r) return r;
+        const t = el.tagName.toLowerCase();
+        if (t==='a' && el.hasAttribute('href')) return 'link';
+        if (t==='button') return 'button';
+        if (t==='input'){ const ty=(el.getAttribute('type')||'text').toLowerCase(); return ty==='checkbox'||ty==='radio'||ty==='button'||ty==='submit'?ty:'textbox'; }
+        if (t==='select') return 'combobox';
+        if (t==='textarea') return 'textbox';
+        return null;
+      }
+      function __accName(el){
+        return (el.getAttribute('aria-label') || el.getAttribute('title') ||
+                (el.innerText || '').trim().slice(0,80) || el.getAttribute('alt') ||
+                el.getAttribute('placeholder') || '').trim();
+      }
+      function __containerOf(el){
+        return el.closest('[role=row],tr,li,[role=listitem],article,[data-row],[data-id]');
+      }
+      function __keyText(container){
+        if (!container) return null;
+        const t = (container.innerText || '').trim().replace(/\\s+/g,' ');
+        return t.slice(0, 120) || null;
+      }
+      function __isVisible(el){
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return false;
+        const s = getComputedStyle(el);
+        return s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';
+      }
+      function __ancestorRoles(el, max=4){
+        const out=[]; let p=el.parentElement;
+        while(p && out.length<max){ const r=__computedRole(p); if(r) out.push(r); p=p.parentElement; }
+        return out;
+      }
+      function __buildFingerprint(target){
+        // Normalize svg/icon clicks → closest real actionable
+        const norm = target.closest('button,a,[role=button],[role=link],[role=menuitem],input,select,textarea,[tabindex]') || target;
+        const container = __containerOf(norm);
+        return {
+          tagName: norm.tagName,
+          role: __computedRole(norm),
+          accessibleName: __accName(norm),
+          visibleText: (norm.innerText||'').trim().slice(0,80),
+          iconClass: __detectIcon(norm),
+          testId: norm.getAttribute('data-testid') || undefined,
+          ariaLabel: norm.getAttribute('aria-label') || undefined,
+          name: norm.getAttribute('name') || undefined,
+          href: norm.getAttribute('href') || undefined,
+          placeholder: norm.getAttribute('placeholder') || undefined,
+          containerRole: container ? (__computedRole(container) || container.tagName.toLowerCase()) : undefined,
+          containerKeyText: __keyText(container),
+          ancestorRoles: __ancestorRoles(norm),
+        };
+      }
+      // Expose to the resolver (called from page.evaluate at replay time)
+      window.__qaforgeBuildFingerprint = __buildFingerprint;
+      window.__qaforgeResolve = function(fp){
+        let scope = document;
+        if (fp.containerKeyText) {
+          const containers = document.querySelectorAll('[role=row],tr,li,[role=listitem],article,[data-row],[data-id]');
+          for (const c of containers) {
+            if ((c.innerText||'').includes(fp.containerKeyText)) { scope = c; break; }
+          }
+        }
+        const cands = scope.querySelectorAll('button,a,[role=button],[role=link],[role=menuitem],input,select,textarea,[tabindex]');
+        let best=null, bestScore=-1;
+        for (const el of cands) {
+          if (!__isVisible(el)) continue;
+          let s = 0;
+          if (fp.testId && el.getAttribute('data-testid')===fp.testId) s += 100;
+          if (fp.ariaLabel && el.getAttribute('aria-label')===fp.ariaLabel) s += 50;
+          if (fp.name && el.getAttribute('name')===fp.name) s += 40;
+          if (fp.href && el.getAttribute('href')===fp.href) s += 30;
+          if (fp.role && __computedRole(el)===fp.role) s += 20;
+          if (fp.accessibleName && __accName(el)===fp.accessibleName) s += 40;
+          if (fp.visibleText && (el.innerText||'').trim().slice(0,80)===fp.visibleText) s += 25;
+          if (fp.iconClass && __detectIcon(el)===fp.iconClass) s += 30;
+          if (fp.tagName && el.tagName===fp.tagName) s += 5;
+          if (fp.placeholder && el.getAttribute('placeholder')===fp.placeholder) s += 25;
+          if (s > bestScore) { bestScore = s; best = el; }
+        }
+        if (!best || bestScore < 25) return null;
+        // Tag for Playwright to grab
+        best.setAttribute('data-qaforge-target', '1');
+        return { score: bestScore, tag: best.tagName, text: (best.innerText||'').slice(0,40) };
+      };
+
+      // ---- Inspector hover/click ----
       let highlightedElement = null;
       document.addEventListener('mouseover', (e) => {
         if (window.__qaforgeMode !== 'inspect') return;
@@ -171,12 +285,11 @@ io.on('connection', (socket) => {
         highlightedElement = e.target; highlightedElement.classList.add('qaforge-highlight');
       }, true);
       document.addEventListener('mouseout', () => { if (highlightedElement) { highlightedElement.classList.remove('qaforge-highlight'); highlightedElement = null; } }, true);
-      function getXPath(el){ if(el.id!=='')return 'id("'+el.id+'")'; if(el===document.body)return el.tagName; let ix=0; const sib=el.parentNode.childNodes; for(let i=0;i<sib.length;i++){const s=sib[i]; if(s===el)return getXPath(el.parentNode)+'/'+el.tagName+'['+(ix+1)+']'; if(s.nodeType===1&&s.tagName===el.tagName)ix++;} }
       document.addEventListener('click', (e) => {
         if (window.__qaforgeMode !== 'inspect') return;
         e.preventDefault(); e.stopPropagation();
-        const t = e.target;
-        window.onElementSelected({ tagName:t.tagName, id:t.id, className:t.className, text:t.innerText?.substring(0,50), placeholder:t.placeholder, name:t.name, role:t.getAttribute('role'), ariaLabel:t.getAttribute('aria-label'), dataTestId:t.getAttribute('data-testid'), xpath:getXPath(t) });
+        try { window.onElementSelected(__buildFingerprint(e.target)); }
+        catch (err) { console.error('qaforge fingerprint', err); }
       }, true);
     ` });
   }
