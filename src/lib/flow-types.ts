@@ -8,7 +8,9 @@ export type ElementFingerprint = {
   accessibleName?: string;
   tagName: string;
   visibleText?: string;
-  iconClass?: string | null;       // edit | delete | close | menu | add | search | back | svg:<hash>
+  iconClass?: string | null;       // edit | delete | close | menu | add | search | back | settings | dropdown | toggle | view | hide | copy | shape:gear | svg:<hash>
+  colorHint?: string | null;       // color:green | color:red | color:amber
+
   testId?: string;
   ariaLabel?: string;
   name?: string;
