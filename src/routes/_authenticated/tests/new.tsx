@@ -72,18 +72,22 @@ function NewTest() {
     setSteps([]);
     setMappings([]);
 
-    const socket = io("http://localhost:4000");
-    socketRef.current = socket;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      
+      const socket = io("http://localhost:4000", { auth: { token } });
+      socketRef.current = socket;
 
-    socket.on("connect", () => {
-      setConnected(true);
-      socket.emit("start_session", { url: formattedUrl });
-    });
+      socket.on("connect", () => {
+        setConnected(true);
+        socket.emit("start_session", { url: formattedUrl });
+      });
 
-    socket.on("connect_error", () => {
-      toast.error("Cannot connect to automation server at localhost:4000");
-      setIsRecording(false);
-    });
+      socket.on("connect_error", (err) => {
+        toast.error("Cannot connect to automation server at localhost:4000: " + err.message);
+        setIsRecording(false);
+      });
 
     socket.on("disconnect", () => {
       setConnected(false);
@@ -195,6 +199,7 @@ function NewTest() {
       });
       toast.success(`Action recorded: ${data.kind}`, { duration: 1000 });
     });
+    })();
   };
 
   const stopRecording = () => {

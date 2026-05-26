@@ -144,7 +144,7 @@ app.use(express.json());
 
 // --- Storage state cache ----------------------------------------------------
 const STATE_DIR = path.join(os.tmpdir(), 'qaforge-states');
-await fs.mkdir(STATE_DIR, { recursive: true }).catch(() => {});
+await fs.mkdir(STATE_DIR, { recursive: true }).catch(() => { });
 
 function stateKey(userId, loginUrl, username) {
   return crypto.createHash('sha256').update(`${userId}::${loginUrl}::${username}`).digest('hex');
@@ -160,7 +160,7 @@ async function saveStorageState(userId, loginUrl, username, state) {
   await fs.writeFile(stateFile(userId, loginUrl, username), JSON.stringify(state));
 }
 async function clearStorageState(userId, loginUrl, username) {
-  try { await fs.unlink(stateFile(userId, loginUrl, username)); } catch {}
+  try { await fs.unlink(stateFile(userId, loginUrl, username)); } catch { }
 }
 
 async function loginAndCache(browser, { userId, loginUrl, username, password, selectors }) {
@@ -171,14 +171,14 @@ async function loginAndCache(browser, { userId, loginUrl, username, password, se
     await page.fill(selectors.username, username, { timeout: 8000 });
     await page.fill(selectors.password, password, { timeout: 8000 });
     await Promise.all([
-      page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {}),
+      page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => { }),
       page.click(selectors.submit, { timeout: 8000 }),
     ]);
     const state = await ctx.storageState();
     await saveStorageState(userId, loginUrl, username, state);
     return state;
   } finally {
-    await ctx.close().catch(() => {});
+    await ctx.close().catch(() => { });
   }
 }
 
@@ -756,9 +756,9 @@ io.on('connection', (socket) => {
   }
 
   async function teardown() {
-    try { if (cdpClient) { await cdpClient.detach().catch(()=>{}); cdpClient = null; } } catch {}
-    if (page) { await page.close().catch(()=>{}); page = null; }
-    if (context) { await context.close().catch(()=>{}); context = null; }
+    try { if (cdpClient) { await cdpClient.detach().catch(() => { }); cdpClient = null; } } catch { }
+    if (page) { await page.close().catch(() => { }); page = null; }
+    if (context) { await context.close().catch(() => { }); context = null; }
   }
 
   socket.on('start_session', async ({ url, auth }) => {
@@ -852,8 +852,8 @@ io.on('connection', (socket) => {
       const start = Date.now();
       emitLog('info', '⌛ Waiting for page stability (network, DOM, loaders)…');
       try {
-        await pg.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => {});
-      } catch {}
+        await pg.waitForLoadState('networkidle', { timeout: 3000 }).catch(() => { });
+      } catch { }
       try {
         const isStable = await pg.evaluate(async (timeout) => {
           return new Promise((resolve) => {
@@ -873,7 +873,7 @@ io.on('connection', (socket) => {
                     return isRealSpinner && style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0 && el.offsetWidth > 5 && el.offsetHeight > 5;
                   });
                   if (visibleLoaders.length > 0) { hasActiveLoader = true; break; }
-                } catch {}
+                } catch { }
               }
               const timeSinceLastMutation = now - lastMutation;
               if (timeSinceLastMutation >= 400 && !hasActiveLoader) { cleanup(); resolve(true); }
@@ -924,7 +924,7 @@ io.on('connection', (socket) => {
           if (blockerId) blocker = document.getElementById(blockerId);
           if (!blocker && blockerClass) {
             const selector = `${blockerTag}.${blockerClass.split(' ').filter(c => c.trim()).join('.')}`;
-            try { blocker = document.querySelector(selector); } catch {}
+            try { blocker = document.querySelector(selector); } catch { }
           }
           if (!blocker) blocker = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
           if (!blocker) return { success: false, reason: 'blocker_not_found_in_dom' };
@@ -1020,7 +1020,7 @@ io.on('connection', (socket) => {
           setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; el.style.boxShadow = ''; }, 1200);
         });
         await locator.page().waitForTimeout(400);
-      } catch {}
+      } catch { }
     }
 
     async function waitForStableBoundingBox(pg, selector, timeoutMs = 2500) {
@@ -1046,7 +1046,7 @@ io.on('connection', (socket) => {
           }
           await pg.waitForTimeout(50);
         }
-      } catch {}
+      } catch { }
       return false;
     }
 
@@ -1110,7 +1110,7 @@ io.on('connection', (socket) => {
           const status = response.status();
           let payload = request.postData() || undefined;
           let responseText = undefined;
-          try { responseText = await response.text(); } catch {}
+          try { responseText = await response.text(); } catch { }
           const apiCall = {
             id: Math.random().toString(36).substring(2, 9),
             method,
@@ -1130,7 +1130,7 @@ io.on('connection', (socket) => {
         await runCdpClient.send('Page.startScreencast', { format: 'jpeg', quality: 55, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800 });
         runCdpClient.on('Page.screencastFrame', async (frame) => {
           socket.emit('screencast_frame', { data: frame.data });
-          try { await runCdpClient.send('Page.screencastFrameAck', { sessionId: frame.sessionId }); } catch {}
+          try { await runCdpClient.send('Page.screencastFrameAck', { sessionId: frame.sessionId }); } catch { }
         });
         emitLog('info', 'Screencast started');
       } catch (cdpErr) {
@@ -1171,7 +1171,7 @@ io.on('connection', (socket) => {
               }, { timeout: 3000 });
               alreadyNavigated = true;
               emitLog('info', `${label} — Already at target URL or navigated naturally. Skipping hard reload.`);
-            } catch {}
+            } catch { }
             if (!alreadyNavigated) {
               emitLog('info', `${label} — Performing hard navigation to ${targetUrl}`);
               await runPage.goto(targetUrl, { waitUntil: 'load', timeout: 30000 });
@@ -1204,7 +1204,7 @@ io.on('connection', (socket) => {
               await resolveBlockerForLocator(runPage, locator, label);
               await highlightLocator(locator);
               try {
-                await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+                await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
                 await locator.click({ timeout: 4000 });
                 clicked = true;
               } catch (clickErr) {
@@ -1243,7 +1243,7 @@ io.on('connection', (socket) => {
                     if (healedLoc) {
                       await resolveBlockerForLocator(runPage, healedLoc, label);
                       await highlightLocator(healedLoc);
-                      await healedLoc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+                      await healedLoc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => { });
                       await healedLoc.click({ timeout: 4000 });
                       clicked = true;
                     }
@@ -1281,7 +1281,7 @@ io.on('connection', (socket) => {
                   clicked = true;
                   emitLog('info', `${label} — Clicked successfully using fallback: ${fb.selector}`);
                   break;
-                } catch {}
+                } catch { }
               }
             }
 
@@ -1356,7 +1356,7 @@ io.on('connection', (socket) => {
       }
 
       emitLog('info', 'Waiting for final page redirects/settling…');
-      await runPage.waitForLoadState('networkidle').catch(() => {});
+      await runPage.waitForLoadState('networkidle').catch(() => { });
       await runPage.waitForTimeout(3000);
       emitLog('info', 'Run finished');
       socket.emit('run_finished', { success: true });
@@ -1365,15 +1365,15 @@ io.on('connection', (socket) => {
       emitLog('fail', 'Run error: ' + error.message);
       socket.emit('run_finished', { success: false, error: error.message });
     } finally {
-      if (runCdpClient) try { await runCdpClient.detach().catch(()=>{}); } catch {}
-      if (runPage) await runPage.close().catch(() => {});
-      if (runContext) await runContext.close().catch(() => {});
+      if (runCdpClient) try { await runCdpClient.detach().catch(() => { }); } catch { }
+      if (runPage) await runPage.close().catch(() => { });
+      if (runContext) await runContext.close().catch(() => { });
     }
   });
 
   socket.on('set_mode', async ({ mode }) => {
     if (!page) return;
-    try { await page.evaluate((m) => { window.__qaforgeMode = m; }, mode); } catch {}
+    try { await page.evaluate((m) => { window.__qaforgeMode = m; }, mode); } catch { }
   });
 
   socket.on('forward_click', async ({ x, y, button }) => {
@@ -1388,7 +1388,7 @@ io.on('connection', (socket) => {
     if (!page) return;
     try { await page.mouse.move(Math.round(x), Math.round(y)); await page.mouse.wheel(deltaX || 0, deltaY || 0); } catch (e) { console.error('forward_scroll', e.message); }
   });
-  socket.on('forward_move', async ({ x, y }) => { if (!page) return; try { await page.mouse.move(Math.round(x), Math.round(y)); } catch {} });
+  socket.on('forward_move', async ({ x, y }) => { if (!page) return; try { await page.mouse.move(Math.round(x), Math.round(y)); } catch { } });
   socket.on('forward_key', async ({ key }) => { if (!page) return; try { await page.keyboard.press(key); } catch (e) { console.error('forward_key', e.message); } });
   socket.on('forward_type', async ({ text }) => { if (!page) return; try { await page.keyboard.type(text); } catch (e) { console.error('forward_type', e.message); } });
 

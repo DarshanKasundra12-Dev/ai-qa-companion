@@ -85,11 +85,15 @@ function TestDetail() {
     setHasNewCaptures(false);
     setViewingCaptured(false);
 
-    // Connect to automation server
-    const socket = io("http://localhost:4000");
-    socketRef.current = socket;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
 
-    socket.on("connect", () => {
+      // Connect to automation server
+      const socket = io("http://localhost:4000", { auth: { token } });
+      socketRef.current = socket;
+
+      socket.on("connect", () => {
       setLogs((prev) => [...prev, { timestamp: new Date().toISOString(), level: "info", message: "Connected to automation server" }]);
       socket.emit("run_flow", { url: flow.url, steps, slowMo });
     });
@@ -159,6 +163,7 @@ function TestDetail() {
         socketRef.current = null;
       }, 1000);
     });
+    })();
   }, [steps, flow, testId, qc, slowMo]);
 
   const stopRun = useCallback(() => {
