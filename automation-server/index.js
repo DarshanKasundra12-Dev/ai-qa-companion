@@ -1446,7 +1446,9 @@ io.on('connection', (socket) => {
             }
 
             if (!clicked) throw lastError || new Error(`Failed to click selector: ${step.selector}`);
+            await validateActionStateChange(runPage, stateBefore, label, emitLog);
             await runLookaheadValidation(runPage, nextStepSelector, label);
+
 
           } else if (step.kind === 'input') {
             let locator = null;
