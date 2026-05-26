@@ -350,29 +350,92 @@ io.on('connection', (socket) => {
       window.__qaforgeMode = 'interact';
 
       // ---- Universal fingerprint helpers (record + resolve share this code) ----
+      // Action classes detect the user's *semantic intent* regardless of
+      // whether the click landed on a <path>, <svg>, <i>, <span> or <button>.
       const ICON_RE = {
-        edit:   /edit|pencil/i,
-        delete: /delete|trash|remove|bin/i,
-        close:  /close|dismiss|^x$|x-mark|cross/i,
-        menu:   /menu|more|kebab|dots|ellipsis/i,
-        search: /search|magnify/i,
-        add:    /add|plus|create|new/i,
-        back:   /back|chevron-left|arrow-left/i,
-        next:   /next|chevron-right|arrow-right/i,
+        edit:     /\\b(edit|pencil|modify|rename|update)\\b/i,
+        delete:   /\\b(delete|trash|remove|bin|destroy|discard)\\b/i,
+        close:    /\\b(close|dismiss|cancel|^x$|x-mark|xmark|cross|times)\\b/i,
+        menu:     /\\b(menu|more|kebab|dots|ellipsis|overflow|three-dots)\\b/i,
+        search:   /\\b(search|magnify|find|lookup)\\b/i,
+        add:      /\\b(add|plus|create|new|insert)\\b/i,
+        back:     /\\b(back|chevron-left|arrow-left|prev|previous)\\b/i,
+        next:     /\\b(next|chevron-right|arrow-right|forward)\\b/i,
+        settings: /\\b(settings|gear|cog|preferences|options|configure)\\b/i,
+        dropdown: /\\b(dropdown|chevron-down|caret-down|expand|disclosure)\\b/i,
+        toggle:   /\\b(toggle|switch|enable|disable|activate|deactivate|on-off|power)\\b/i,
+        view:     /\\b(view|eye|preview|show|visible|visibility|reveal)\\b/i,
+        hide:     /\\b(hide|eye-off|invisible|hidden|conceal)\\b/i,
+        copy:     /\\b(copy|duplicate|clone)\\b/i,
+        share:    /\\b(share|export|send)\\b/i,
+        download: /\\b(download|save-file)\\b/i,
+        upload:   /\\b(upload|import|attach)\\b/i,
+        refresh:  /\\b(refresh|reload|sync|rotate-cw)\\b/i,
+        filter:   /\\b(filter|funnel)\\b/i,
+        sort:     /\\b(sort|order-by|arrow-up-down)\\b/i,
+        check:    /\\b(check|tick|confirm|approve|accept|success)\\b/i,
+        info:     /\\b(info|information|help|question)\\b/i,
+        warn:     /\\b(warn|warning|alert|caution|exclamation)\\b/i,
+        star:     /\\b(star|favorite|favourite|bookmark)\\b/i,
+        heart:    /\\b(heart|like|love)\\b/i,
+        play:     /\\b(play|start|run|execute)\\b/i,
+        stop:     /\\b(stop|pause|halt|terminate)\\b/i,
+        lock:     /\\b(lock|secure|private)\\b/i,
+        unlock:   /\\b(unlock|public)\\b/i,
+        user:     /\\b(user|profile|avatar|account)\\b/i,
       };
+      // Crude SVG-path-shape classifier — many icon libraries share recognisable
+      // shapes (gear has many curves, X / + are short orthogonal segments,
+      // chevrons are a couple of short curves).
+      function __classifyPathShape(d){
+        if (!d) return null;
+        const len = d.length;
+        const moves = (d.match(/M/g) || []).length;
+        const curves = (d.match(/[CcSsQqTt]/g) || []).length;
+        const lines = (d.match(/[LlHhVv]/g) || []).length;
+        if (curves > 8 && len > 200) return 'shape:gear';
+        if (moves >= 2 && curves === 0 && lines >= 4 && len < 90) return 'shape:plus-or-x';
+        if (curves > 0 && curves < 4 && len < 80) return 'shape:chevron';
+        return null;
+      }
       function __hash(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return Math.abs(h).toString(36);}
       function __detectIcon(el){
         const btn = el.closest('button,a,[role=button]') || el;
+        const svg = btn.querySelector('svg');
         const sig = [
           btn.getAttribute('aria-label'), btn.getAttribute('title'),
-          btn.getAttribute('data-testid'), btn.className,
-          btn.querySelector('svg')?.getAttribute('class') || '',
-          btn.querySelector('use')?.getAttribute('href') || '',
+          btn.getAttribute('data-testid'), btn.getAttribute('data-icon'),
+          btn.className,
+          svg?.getAttribute('class') || '',
+          svg?.getAttribute('data-icon') || '',
+          btn.querySelector('use')?.getAttribute('href') || btn.querySelector('use')?.getAttribute('xlink:href') || '',
           btn.querySelector('i')?.className || '',
+          btn.querySelector('[class*="icon-"]')?.className || '',
         ].filter(Boolean).join(' ');
         for (const [name, re] of Object.entries(ICON_RE)) if (re.test(sig)) return name;
-        const d = btn.querySelector('svg path[d]')?.getAttribute('d');
+        const d = svg?.querySelector('path[d]')?.getAttribute('d');
+        const shape = __classifyPathShape(d);
+        if (shape) return shape;
         return d ? 'svg:' + __hash(d.slice(0,80)) : null;
+      }
+      // Dominant color hint — distinguishes green-enable from red-delete buttons
+      // that share the same shape.
+      function __colorHint(el){
+        try {
+          const btn = el.closest('button,a,[role=button]') || el;
+          const sources = [btn, btn.querySelector('svg'), btn.querySelector('path')].filter(Boolean);
+          for (const s of sources) {
+            const cs = getComputedStyle(s);
+            const c = (cs.fill && cs.fill !== 'none') ? cs.fill : cs.color;
+            const m = c && c.match(/rgb[a]?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+            if (!m) continue;
+            const r=+m[1], g=+m[2], b=+m[3];
+            if (g > 140 && g > r + 30 && g > b + 30) return 'color:green';
+            if (r > 160 && r > g + 40 && r > b + 40) return 'color:red';
+            if (r > 180 && g > 140 && b < 80)        return 'color:amber';
+          }
+        } catch {}
+        return null;
       }
       function __computedRole(el){
         const r = el.getAttribute('role'); if (r) return r;
@@ -389,19 +452,47 @@ io.on('connection', (socket) => {
                 (el.innerText || '').trim().slice(0,80) || el.getAttribute('alt') ||
                 el.getAttribute('placeholder') || '').trim();
       }
+      // Repeated container detection — rows, cards, list items, tiles, grid cells.
+      const CONTAINER_SEL = [
+        '[role=row]','tr',
+        'li','[role=listitem]',
+        'article',
+        '[data-row]','[data-id]','[data-key]','[data-item-id]','[data-test-row]',
+        '[class*="card" i]','[class*="row" i]','[class*="tile" i]',
+        '[class*="item" i]','[class*="cell" i]','[class*="entry" i]',
+        '[class*="grid__item" i]','[class*="list-item" i]',
+      ].join(',');
       function __containerOf(el){
-        return el.closest('[role=row],tr,li,[role=listitem],article,[data-row],[data-id]');
+        // Walk up to the smallest matching ancestor that has at least one
+        // sibling of the same tag — i.e. an actually repeated container.
+        let cand = el.closest(CONTAINER_SEL);
+        while (cand) {
+          const parent = cand.parentElement;
+          if (!parent) break;
+          const sib = Array.from(parent.children).some(s => s !== cand && s.tagName === cand.tagName);
+          if (sib) return cand;
+          const next = parent.closest(CONTAINER_SEL);
+          if (!next || next === cand) break;
+          cand = next;
+        }
+        return el.closest(CONTAINER_SEL);
       }
       function __keyText(container){
         if (!container) return null;
+        // Prefer heading/title text — much more stable than full innerText,
+        // which usually includes the action labels we're trying to disambiguate.
+        const heading = container.querySelector('h1,h2,h3,h4,h5,h6,[role=heading],strong,b,[class*="title" i],[class*="name" i]');
+        const headText = heading && (heading.innerText || '').trim();
+        if (headText && headText.length >= 2 && headText.length <= 120) return headText.slice(0,120);
         const t = (container.innerText || '').trim().replace(/\\s+/g,' ');
         return t.slice(0, 120) || null;
       }
       function __isVisible(el){
         const r = el.getBoundingClientRect();
         if (r.width < 2 || r.height < 2) return false;
+        if (r.bottom < 0 || r.top > (window.innerHeight + 2000)) return false;
         const s = getComputedStyle(el);
-        return s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';
+        return s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0' && s.pointerEvents!=='none';
       }
       function __ancestorRoles(el, max=4){
         const out=[]; let p=el.parentElement;
