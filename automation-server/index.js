@@ -955,7 +955,46 @@ io.on('connection', (socket) => {
     await p.evaluate(() => document.querySelectorAll('[data-qaforge-target]').forEach(e => e.removeAttribute('data-qaforge-target')));
     const res = await p.evaluate((f) => window.__qaforgeResolve(f), fp);
     if (!res) return null;
+    if (res.ambiguous) return null; // force healing path
     return p.locator('[data-qaforge-target="1"]').first();
+  }
+
+  // Snapshot URL + DOM signature + open-overlay count to detect that *something*
+  // actually changed in response to a click. Used by the state-aware execution
+  // loop so we never blindly move on after clicking the wrong icon.
+  async function captureStateSignature(pg) {
+    try {
+      return await pg.evaluate(() => ({
+        url: location.href,
+        title: document.title,
+        // Cheap fingerprint of body — enough to detect any DOM mutation.
+        bodyLen: (document.body && document.body.innerText || '').length,
+        bodyHash: ((document.body && document.body.innerHTML || '').length) | 0,
+        // Visible modal / dialog count
+        overlays: document.querySelectorAll('[role=dialog],[role=alertdialog],.modal,[class*="modal" i][class*="open" i],[data-state="open"][role]').length,
+        ts: Date.now(),
+      }));
+    } catch { return null; }
+  }
+  async function validateActionStateChange(pg, before, label, emitLog) {
+    if (!before) return true;
+    const deadline = Date.now() + 1800;
+    while (Date.now() < deadline) {
+      const after = await captureStateSignature(pg);
+      if (!after) break;
+      const changed = after.url !== before.url
+        || after.title !== before.title
+        || Math.abs(after.bodyLen - before.bodyLen) > 4
+        || after.bodyHash !== before.bodyHash
+        || after.overlays !== before.overlays;
+      if (changed) {
+        emitLog && emitLog('info', `${label} — Post-click state change detected (url=${after.url !== before.url}, overlays=${after.overlays - before.overlays}, dom=${after.bodyHash !== before.bodyHash}).`);
+        return true;
+      }
+      await pg.waitForTimeout(100);
+    }
+    emitLog && emitLog('warn', `${label} — Click produced no observable UI change in 1.8s — selector may have hit the wrong element.`);
+    return false;
   }
 
   socket.on('run_flow', async ({ url, steps, slowMo = 800 }) => {
