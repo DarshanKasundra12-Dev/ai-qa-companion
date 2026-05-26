@@ -1346,6 +1346,7 @@ io.on('connection', (socket) => {
             let locator = null;
             let clicked = false;
             let lastError = null;
+            const stateBefore = await captureStateSignature(runPage);
 
             if (step.fingerprint) {
               emitLog('info', `${label} — Resolving fingerprint: ${JSON.stringify(step.fingerprint)}`);
