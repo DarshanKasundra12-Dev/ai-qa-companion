@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Play, Square, Activity, MousePointer2, Globe, Shield, Eye,
-  Network, Copy, CheckCircle2, ArrowLeft,
+  Network, Copy, CheckCircle2, ArrowLeft, AlertTriangle,
   Wifi, WifiOff, Sparkles, Code, KeyRound, RefreshCw
 } from "lucide-react";
 import { toast } from "sonner";

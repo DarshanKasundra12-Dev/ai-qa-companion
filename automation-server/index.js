@@ -350,29 +350,92 @@ io.on('connection', (socket) => {
       window.__qaforgeMode = 'interact';
 
       // ---- Universal fingerprint helpers (record + resolve share this code) ----
+      // Action classes detect the user's *semantic intent* regardless of
+      // whether the click landed on a <path>, <svg>, <i>, <span> or <button>.
       const ICON_RE = {
-        edit:   /edit|pencil/i,
-        delete: /delete|trash|remove|bin/i,
-        close:  /close|dismiss|^x$|x-mark|cross/i,
-        menu:   /menu|more|kebab|dots|ellipsis/i,
-        search: /search|magnify/i,
-        add:    /add|plus|create|new/i,
-        back:   /back|chevron-left|arrow-left/i,
-        next:   /next|chevron-right|arrow-right/i,
+        edit:     /\\b(edit|pencil|modify|rename|update)\\b/i,
+        delete:   /\\b(delete|trash|remove|bin|destroy|discard)\\b/i,
+        close:    /\\b(close|dismiss|cancel|^x$|x-mark|xmark|cross|times)\\b/i,
+        menu:     /\\b(menu|more|kebab|dots|ellipsis|overflow|three-dots)\\b/i,
+        search:   /\\b(search|magnify|find|lookup)\\b/i,
+        add:      /\\b(add|plus|create|new|insert)\\b/i,
+        back:     /\\b(back|chevron-left|arrow-left|prev|previous)\\b/i,
+        next:     /\\b(next|chevron-right|arrow-right|forward)\\b/i,
+        settings: /\\b(settings|gear|cog|preferences|options|configure)\\b/i,
+        dropdown: /\\b(dropdown|chevron-down|caret-down|expand|disclosure)\\b/i,
+        toggle:   /\\b(toggle|switch|enable|disable|activate|deactivate|on-off|power)\\b/i,
+        view:     /\\b(view|eye|preview|show|visible|visibility|reveal)\\b/i,
+        hide:     /\\b(hide|eye-off|invisible|hidden|conceal)\\b/i,
+        copy:     /\\b(copy|duplicate|clone)\\b/i,
+        share:    /\\b(share|export|send)\\b/i,
+        download: /\\b(download|save-file)\\b/i,
+        upload:   /\\b(upload|import|attach)\\b/i,
+        refresh:  /\\b(refresh|reload|sync|rotate-cw)\\b/i,
+        filter:   /\\b(filter|funnel)\\b/i,
+        sort:     /\\b(sort|order-by|arrow-up-down)\\b/i,
+        check:    /\\b(check|tick|confirm|approve|accept|success)\\b/i,
+        info:     /\\b(info|information|help|question)\\b/i,
+        warn:     /\\b(warn|warning|alert|caution|exclamation)\\b/i,
+        star:     /\\b(star|favorite|favourite|bookmark)\\b/i,
+        heart:    /\\b(heart|like|love)\\b/i,
+        play:     /\\b(play|start|run|execute)\\b/i,
+        stop:     /\\b(stop|pause|halt|terminate)\\b/i,
+        lock:     /\\b(lock|secure|private)\\b/i,
+        unlock:   /\\b(unlock|public)\\b/i,
+        user:     /\\b(user|profile|avatar|account)\\b/i,
       };
+      // Crude SVG-path-shape classifier — many icon libraries share recognisable
+      // shapes (gear has many curves, X / + are short orthogonal segments,
+      // chevrons are a couple of short curves).
+      function __classifyPathShape(d){
+        if (!d) return null;
+        const len = d.length;
+        const moves = (d.match(/M/g) || []).length;
+        const curves = (d.match(/[CcSsQqTt]/g) || []).length;
+        const lines = (d.match(/[LlHhVv]/g) || []).length;
+        if (curves > 8 && len > 200) return 'shape:gear';
+        if (moves >= 2 && curves === 0 && lines >= 4 && len < 90) return 'shape:plus-or-x';
+        if (curves > 0 && curves < 4 && len < 80) return 'shape:chevron';
+        return null;
+      }
       function __hash(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return Math.abs(h).toString(36);}
       function __detectIcon(el){
         const btn = el.closest('button,a,[role=button]') || el;
+        const svg = btn.querySelector('svg');
         const sig = [
           btn.getAttribute('aria-label'), btn.getAttribute('title'),
-          btn.getAttribute('data-testid'), btn.className,
-          btn.querySelector('svg')?.getAttribute('class') || '',
-          btn.querySelector('use')?.getAttribute('href') || '',
+          btn.getAttribute('data-testid'), btn.getAttribute('data-icon'),
+          btn.className,
+          svg?.getAttribute('class') || '',
+          svg?.getAttribute('data-icon') || '',
+          btn.querySelector('use')?.getAttribute('href') || btn.querySelector('use')?.getAttribute('xlink:href') || '',
           btn.querySelector('i')?.className || '',
+          btn.querySelector('[class*="icon-"]')?.className || '',
         ].filter(Boolean).join(' ');
         for (const [name, re] of Object.entries(ICON_RE)) if (re.test(sig)) return name;
-        const d = btn.querySelector('svg path[d]')?.getAttribute('d');
+        const d = svg?.querySelector('path[d]')?.getAttribute('d');
+        const shape = __classifyPathShape(d);
+        if (shape) return shape;
         return d ? 'svg:' + __hash(d.slice(0,80)) : null;
+      }
+      // Dominant color hint — distinguishes green-enable from red-delete buttons
+      // that share the same shape.
+      function __colorHint(el){
+        try {
+          const btn = el.closest('button,a,[role=button]') || el;
+          const sources = [btn, btn.querySelector('svg'), btn.querySelector('path')].filter(Boolean);
+          for (const s of sources) {
+            const cs = getComputedStyle(s);
+            const c = (cs.fill && cs.fill !== 'none') ? cs.fill : cs.color;
+            const m = c && c.match(/rgb[a]?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+            if (!m) continue;
+            const r=+m[1], g=+m[2], b=+m[3];
+            if (g > 140 && g > r + 30 && g > b + 30) return 'color:green';
+            if (r > 160 && r > g + 40 && r > b + 40) return 'color:red';
+            if (r > 180 && g > 140 && b < 80)        return 'color:amber';
+          }
+        } catch {}
+        return null;
       }
       function __computedRole(el){
         const r = el.getAttribute('role'); if (r) return r;
@@ -389,19 +452,47 @@ io.on('connection', (socket) => {
                 (el.innerText || '').trim().slice(0,80) || el.getAttribute('alt') ||
                 el.getAttribute('placeholder') || '').trim();
       }
+      // Repeated container detection — rows, cards, list items, tiles, grid cells.
+      const CONTAINER_SEL = [
+        '[role=row]','tr',
+        'li','[role=listitem]',
+        'article',
+        '[data-row]','[data-id]','[data-key]','[data-item-id]','[data-test-row]',
+        '[class*="card" i]','[class*="row" i]','[class*="tile" i]',
+        '[class*="item" i]','[class*="cell" i]','[class*="entry" i]',
+        '[class*="grid__item" i]','[class*="list-item" i]',
+      ].join(',');
       function __containerOf(el){
-        return el.closest('[role=row],tr,li,[role=listitem],article,[data-row],[data-id]');
+        // Walk up to the smallest matching ancestor that has at least one
+        // sibling of the same tag — i.e. an actually repeated container.
+        let cand = el.closest(CONTAINER_SEL);
+        while (cand) {
+          const parent = cand.parentElement;
+          if (!parent) break;
+          const sib = Array.from(parent.children).some(s => s !== cand && s.tagName === cand.tagName);
+          if (sib) return cand;
+          const next = parent.closest(CONTAINER_SEL);
+          if (!next || next === cand) break;
+          cand = next;
+        }
+        return el.closest(CONTAINER_SEL);
       }
       function __keyText(container){
         if (!container) return null;
+        // Prefer heading/title text — much more stable than full innerText,
+        // which usually includes the action labels we're trying to disambiguate.
+        const heading = container.querySelector('h1,h2,h3,h4,h5,h6,[role=heading],strong,b,[class*="title" i],[class*="name" i]');
+        const headText = heading && (heading.innerText || '').trim();
+        if (headText && headText.length >= 2 && headText.length <= 120) return headText.slice(0,120);
         const t = (container.innerText || '').trim().replace(/\\s+/g,' ');
         return t.slice(0, 120) || null;
       }
       function __isVisible(el){
         const r = el.getBoundingClientRect();
         if (r.width < 2 || r.height < 2) return false;
+        if (r.bottom < 0 || r.top > (window.innerHeight + 2000)) return false;
         const s = getComputedStyle(el);
-        return s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0';
+        return s.display!=='none' && s.visibility!=='hidden' && s.opacity!=='0' && s.pointerEvents!=='none';
       }
       function __ancestorRoles(el, max=4){
         const out=[]; let p=el.parentElement;
@@ -567,6 +658,7 @@ io.on('connection', (socket) => {
           accessibleName: __accName(norm),
           visibleText: (norm.innerText||'').trim().slice(0,80),
           iconClass: __detectIcon(norm),
+          colorHint: __colorHint(norm),
           testId: norm.getAttribute('data-testid') || undefined,
           dataCy: norm.getAttribute('data-cy') || undefined,
           dataQa: norm.getAttribute('data-qa') || undefined,
@@ -591,15 +683,23 @@ io.on('connection', (socket) => {
 
       window.__qaforgeBuildFingerprint = __buildFingerprint;
       window.__qaforgeResolve = function(fp){
+        // 1. Narrow to the container whose key text matches the recorded card/row.
+        //    Prefer the *smallest* container whose key text exactly matches.
         let scope = document;
         if (fp.containerKeyText) {
-          const containers = document.querySelectorAll('[role=row],tr,li,[role=listitem],article,[data-row],[data-id]');
+          const containers = Array.from(document.querySelectorAll(CONTAINER_SEL));
+          let bestC = null, bestCLen = Infinity;
           for (const c of containers) {
-            if ((c.innerText||'').includes(fp.containerKeyText)) { scope = c; break; }
+            const kt = __keyText(c) || '';
+            if (kt && (kt === fp.containerKeyText || kt.includes(fp.containerKeyText) || fp.containerKeyText.includes(kt))) {
+              const len = (c.innerText || '').length;
+              if (len < bestCLen) { bestC = c; bestCLen = len; }
+            }
           }
+          if (bestC) scope = bestC;
         }
         const cands = scope.querySelectorAll('button,a,[role=button],[role=link],[role=menuitem],input,select,textarea,[tabindex]');
-        let best=null, bestScore=-1;
+        let best=null, bestScore=-1, second=null, secondScore=-1;
         for (const el of cands) {
           if (!__isVisible(el)) continue;
           let s = 0;
@@ -612,12 +712,32 @@ io.on('connection', (socket) => {
           if (fp.role && __computedRole(el)===fp.role) s += 20;
           if (fp.accessibleName && __accName(el)===fp.accessibleName) s += 40;
           if (fp.visibleText && (el.innerText||'').trim().slice(0,80)===fp.visibleText) s += 25;
-          if (fp.iconClass && __detectIcon(el)===fp.iconClass) s += 30;
+          if (fp.iconClass && __detectIcon(el)===fp.iconClass) s += 35;
+          if (fp.colorHint && __colorHint(el)===fp.colorHint) s += 20;
           if (fp.tagName && el.tagName===fp.tagName) s += 5;
           if (fp.placeholder && el.getAttribute('placeholder')===fp.placeholder) s += 25;
-          if (s > bestScore) { bestScore = s; best = el; }
+          // Bonus when the candidate's own container also matches.
+          if (fp.containerKeyText) {
+            const c = __containerOf(el);
+            const kt = c ? (__keyText(c) || '') : '';
+            if (kt && (kt === fp.containerKeyText || kt.includes(fp.containerKeyText))) s += 25;
+          }
+          if (s > bestScore) {
+            secondScore = bestScore; second = best;
+            bestScore = s; best = el;
+          } else if (s > secondScore) {
+            secondScore = s; second = el;
+          }
         }
         if (!best || bestScore < 25) return null;
+        // Ambiguity guard — if the runner-up is within 10 points and we have no
+        // strong unique signal (testId / aria / container key text), refuse to
+        // guess so the caller can trigger AI healing instead of clicking the
+        // wrong card's button.
+        const strongSignal = (fp.testId || fp.dataCy || fp.dataQa || fp.ariaLabel || fp.containerKeyText);
+        if (second && (bestScore - secondScore) < 10 && !strongSignal) {
+          return { ambiguous: true, top: bestScore, runnerUp: secondScore };
+        }
         best.setAttribute('data-qaforge-target', '1');
         return { score: bestScore, tag: best.tagName, text: (best.innerText||'').slice(0,40) };
       };
@@ -835,7 +955,46 @@ io.on('connection', (socket) => {
     await p.evaluate(() => document.querySelectorAll('[data-qaforge-target]').forEach(e => e.removeAttribute('data-qaforge-target')));
     const res = await p.evaluate((f) => window.__qaforgeResolve(f), fp);
     if (!res) return null;
+    if (res.ambiguous) return null; // force healing path
     return p.locator('[data-qaforge-target="1"]').first();
+  }
+
+  // Snapshot URL + DOM signature + open-overlay count to detect that *something*
+  // actually changed in response to a click. Used by the state-aware execution
+  // loop so we never blindly move on after clicking the wrong icon.
+  async function captureStateSignature(pg) {
+    try {
+      return await pg.evaluate(() => ({
+        url: location.href,
+        title: document.title,
+        // Cheap fingerprint of body — enough to detect any DOM mutation.
+        bodyLen: (document.body && document.body.innerText || '').length,
+        bodyHash: ((document.body && document.body.innerHTML || '').length) | 0,
+        // Visible modal / dialog count
+        overlays: document.querySelectorAll('[role=dialog],[role=alertdialog],.modal,[class*="modal" i][class*="open" i],[data-state="open"][role]').length,
+        ts: Date.now(),
+      }));
+    } catch { return null; }
+  }
+  async function validateActionStateChange(pg, before, label, emitLog) {
+    if (!before) return true;
+    const deadline = Date.now() + 1800;
+    while (Date.now() < deadline) {
+      const after = await captureStateSignature(pg);
+      if (!after) break;
+      const changed = after.url !== before.url
+        || after.title !== before.title
+        || Math.abs(after.bodyLen - before.bodyLen) > 4
+        || after.bodyHash !== before.bodyHash
+        || after.overlays !== before.overlays;
+      if (changed) {
+        emitLog && emitLog('info', `${label} — Post-click state change detected (url=${after.url !== before.url}, overlays=${after.overlays - before.overlays}, dom=${after.bodyHash !== before.bodyHash}).`);
+        return true;
+      }
+      await pg.waitForTimeout(100);
+    }
+    emitLog && emitLog('warn', `${label} — Click produced no observable UI change in 1.8s — selector may have hit the wrong element.`);
+    return false;
   }
 
   socket.on('run_flow', async ({ url, steps, slowMo = 800 }) => {
@@ -1187,6 +1346,7 @@ io.on('connection', (socket) => {
             let locator = null;
             let clicked = false;
             let lastError = null;
+            const stateBefore = await captureStateSignature(runPage);
 
             if (step.fingerprint) {
               emitLog('info', `${label} — Resolving fingerprint: ${JSON.stringify(step.fingerprint)}`);
@@ -1286,7 +1446,9 @@ io.on('connection', (socket) => {
             }
 
             if (!clicked) throw lastError || new Error(`Failed to click selector: ${step.selector}`);
+            await validateActionStateChange(runPage, stateBefore, label, emitLog);
             await runLookaheadValidation(runPage, nextStepSelector, label);
+
 
           } else if (step.kind === 'input') {
             let locator = null;
