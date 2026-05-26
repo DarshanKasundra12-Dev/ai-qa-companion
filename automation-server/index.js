@@ -658,6 +658,7 @@ io.on('connection', (socket) => {
           accessibleName: __accName(norm),
           visibleText: (norm.innerText||'').trim().slice(0,80),
           iconClass: __detectIcon(norm),
+          colorHint: __colorHint(norm),
           testId: norm.getAttribute('data-testid') || undefined,
           dataCy: norm.getAttribute('data-cy') || undefined,
           dataQa: norm.getAttribute('data-qa') || undefined,
@@ -682,15 +683,23 @@ io.on('connection', (socket) => {
 
       window.__qaforgeBuildFingerprint = __buildFingerprint;
       window.__qaforgeResolve = function(fp){
+        // 1. Narrow to the container whose key text matches the recorded card/row.
+        //    Prefer the *smallest* container whose key text exactly matches.
         let scope = document;
         if (fp.containerKeyText) {
-          const containers = document.querySelectorAll('[role=row],tr,li,[role=listitem],article,[data-row],[data-id]');
+          const containers = Array.from(document.querySelectorAll(CONTAINER_SEL));
+          let bestC = null, bestCLen = Infinity;
           for (const c of containers) {
-            if ((c.innerText||'').includes(fp.containerKeyText)) { scope = c; break; }
+            const kt = __keyText(c) || '';
+            if (kt && (kt === fp.containerKeyText || kt.includes(fp.containerKeyText) || fp.containerKeyText.includes(kt))) {
+              const len = (c.innerText || '').length;
+              if (len < bestCLen) { bestC = c; bestCLen = len; }
+            }
           }
+          if (bestC) scope = bestC;
         }
         const cands = scope.querySelectorAll('button,a,[role=button],[role=link],[role=menuitem],input,select,textarea,[tabindex]');
-        let best=null, bestScore=-1;
+        let best=null, bestScore=-1, second=null, secondScore=-1;
         for (const el of cands) {
           if (!__isVisible(el)) continue;
           let s = 0;
@@ -703,12 +712,32 @@ io.on('connection', (socket) => {
           if (fp.role && __computedRole(el)===fp.role) s += 20;
           if (fp.accessibleName && __accName(el)===fp.accessibleName) s += 40;
           if (fp.visibleText && (el.innerText||'').trim().slice(0,80)===fp.visibleText) s += 25;
-          if (fp.iconClass && __detectIcon(el)===fp.iconClass) s += 30;
+          if (fp.iconClass && __detectIcon(el)===fp.iconClass) s += 35;
+          if (fp.colorHint && __colorHint(el)===fp.colorHint) s += 20;
           if (fp.tagName && el.tagName===fp.tagName) s += 5;
           if (fp.placeholder && el.getAttribute('placeholder')===fp.placeholder) s += 25;
-          if (s > bestScore) { bestScore = s; best = el; }
+          // Bonus when the candidate's own container also matches.
+          if (fp.containerKeyText) {
+            const c = __containerOf(el);
+            const kt = c ? (__keyText(c) || '') : '';
+            if (kt && (kt === fp.containerKeyText || kt.includes(fp.containerKeyText))) s += 25;
+          }
+          if (s > bestScore) {
+            secondScore = bestScore; second = best;
+            bestScore = s; best = el;
+          } else if (s > secondScore) {
+            secondScore = s; second = el;
+          }
         }
         if (!best || bestScore < 25) return null;
+        // Ambiguity guard — if the runner-up is within 10 points and we have no
+        // strong unique signal (testId / aria / container key text), refuse to
+        // guess so the caller can trigger AI healing instead of clicking the
+        // wrong card's button.
+        const strongSignal = (fp.testId || fp.dataCy || fp.dataQa || fp.ariaLabel || fp.containerKeyText);
+        if (second && (bestScore - secondScore) < 10 && !strongSignal) {
+          return { ambiguous: true, top: bestScore, runnerUp: secondScore };
+        }
         best.setAttribute('data-qaforge-target', '1');
         return { score: bestScore, tag: best.tagName, text: (best.innerText||'').slice(0,40) };
       };
